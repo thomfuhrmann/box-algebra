@@ -4,33 +4,6 @@ use std::{
     ops::{Add, Deref, DerefMut, Mul},
 };
 
-trait Equality<Rhs = Self> {
-    fn equals(&self, other: &Rhs) -> bool;
-}
-
-impl Equality for BTreeMap<MBox, u32> {
-    fn equals(&self, other: &Self) -> bool {
-        if self.len() == other.len() {
-            if self.is_empty() && other.is_empty() {
-                return true;
-            } else {
-                for (lk, lv) in self {
-                    for (rk, rv) in other {
-                        if (lv == rv) && (lk == rk) {
-                            continue;
-                        } else {
-                            return false;
-                        }
-                    }
-                }
-                return true;
-            }
-        } else {
-            return false;
-        }
-    }
-}
-
 /// This is the fundamental data structure for mathematical boxes
 #[derive(Debug, Clone)]
 pub enum MBox {
@@ -58,7 +31,7 @@ impl Ord for MBox {
         match self {
             MBox::Box(l) => match other {
                 MBox::Box(r) => {
-                    if l.equals(r) {
+                    if l == r {
                         return Ordering::Equal;
                     } else if l.is_empty() {
                         return Ordering::Less;
@@ -68,12 +41,32 @@ impl Ord for MBox {
                         return l.cmp(r);
                     }
                 }
-                MBox::AntiBox(_) => Ordering::Less,
+                MBox::AntiBox(r) => {
+                    if l == r {
+                        return Ordering::Less;
+                    } else if l.is_empty() {
+                        return Ordering::Less;
+                    } else if r.is_empty() {
+                        return Ordering::Greater;
+                    } else {
+                        return l.cmp(r);
+                    }
+                }
             },
             MBox::AntiBox(l) => match other {
-                MBox::Box(_) => Ordering::Greater,
+                MBox::Box(r) => {
+                    if l == r {
+                        return Ordering::Greater;
+                    } else if l.is_empty() {
+                        return Ordering::Less;
+                    } else if r.is_empty() {
+                        return Ordering::Greater;
+                    } else {
+                        return l.cmp(r);
+                    }
+                }
                 MBox::AntiBox(r) => {
-                    if l.equals(r) {
+                    if l == r {
                         return Ordering::Equal;
                     } else if l.is_empty() {
                         return Ordering::Less;
@@ -191,25 +184,17 @@ impl MBox {
             for (b, v1) in self.boxes() {
                 let b = b.annihilate();
 
-                if b.is_anti_box() {
-                    let anti = b.clone().into_anti();
-                    // Check if corresponding anti-box is already contained in outer box
-                    if let Some(v2) = outer.get_mut(&anti) {
-                        let v2_copy = *v2;
-                        if v1 >= v2_copy {
-                            outer.remove(&anti);
-                            if v1 > v2_copy {
-                                outer.insert(b, v1 - v2_copy);
-                            }
-                        } else {
-                            *v2 = v2_copy - v1;
+                let anti = b.clone().into_anti();
+                // Check if corresponding box is already contained in outer box
+                if let Some(v2) = outer.get_mut(&anti) {
+                    let v2_copy = *v2;
+                    if v1 >= v2_copy {
+                        outer.remove(&anti);
+                        if v1 > v2_copy {
+                            outer.insert(b, v1 - v2_copy);
                         }
                     } else {
-                        if let Some(v2) = outer.get_mut(&b) {
-                            *v2 += v1;
-                        } else {
-                            outer.insert(b, v1);
-                        }
+                        *v2 = v2_copy - v1;
                     }
                 } else {
                     if let Some(v2) = outer.get_mut(&b) {
@@ -250,6 +235,21 @@ impl From<u32> for MBox {
         let mut m = MBox::new();
         m.insert(e, value);
         m
+    }
+}
+
+impl From<i32> for MBox {
+    fn from(value: i32) -> Self {
+        let mut m = MBox::new();
+        if value >= 0 {
+            let e = MBox::new();
+            m.insert(e, value as u32);
+            m
+        } else {
+            let e = MBox::new_anti();
+            m.insert(e, (-value) as u32);
+            m
+        }
     }
 }
 
@@ -384,6 +384,23 @@ mod tests {
     }
 
     #[test]
+    fn test_ord_1() {
+        let mut b1 = MBox::new();
+        let b2 = MBox::from(2);
+
+        b1.insert(b2, 2);
+        b1.insert(MBox::new_anti(), 1);
+        b1.insert(MBox::new(), 1);
+
+        let mut b3 = MBox::new();
+        let b4 = MBox::from(2);
+
+        b3.insert(b4, 2);
+
+        assert!(b1 < b3);
+    }
+
+    #[test]
     fn mult_1() {
         let b1 = MBox::from(3);
         let b2 = MBox::from(5);
@@ -456,5 +473,44 @@ mod tests {
         b.insert(MBox::new(), 1);
 
         assert_eq!(b.annihilate(), MBox::new());
+    }
+
+    #[test]
+    fn test_annihilate_2() {
+        let mut b = MBox::new();
+        b.insert(MBox::new_anti(), 1);
+        b.insert(MBox::new(), 1);
+        let mut c = MBox::new();
+        c.insert(b.clone(), 1);
+
+        let d = MBox::from(1);
+
+        assert_eq!(c.annihilate(), d);
+
+        let mut e = MBox::new_anti();
+        e.insert(MBox::new_anti(), 1);
+        e.insert(MBox::new(), 1);
+        let mut f = MBox::new();
+        f.insert(b.clone(), 1);
+        f.insert(e.clone(), 1);
+
+        assert_eq!(f.annihilate(), MBox::new());
+    }
+
+    #[test]
+    fn test_annihilate_3() {
+        let mut a = MBox::new();
+        a.insert(MBox::new(), 1);
+        a.insert(MBox::new_anti(), 1);
+
+        let mut b = MBox::new_anti();
+        b.insert(MBox::new(), 1);
+        b.insert(MBox::new_anti(), 1);
+
+        let mut c = MBox::new();
+        c.insert(a, 1);
+        c.insert(b, 1);
+
+        assert_eq!(c.annihilate(), MBox::new());
     }
 }
