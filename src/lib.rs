@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, HashSet},
+    collections::BTreeMap,
     ops::{Add, Deref, DerefMut, Mul},
 };
 
