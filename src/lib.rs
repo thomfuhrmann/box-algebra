@@ -1,3 +1,18 @@
+//! Box Algebra is a new way of understanding what arithmetic, and much of associated mathematics, is actually truly about. The most important new understandings are that
+//! 1. the most powerful data structure for foundational work is not a set, and is not a list, but is rather a multiset, where elements are unordered and repetitions are allowed
+//! 2. the particle / anti particle duality famously discovered by Paul Dirac in 20th century physics has a deep and remarkable analog in the foundations of arithmetic.
+//!
+//! When we put these two together, we get Box Arithmetic.
+//!
+//! This crate defines the fundamental data structure, a mathematical box, and associated methods for doing basic algebraic operations.
+//!
+//! # References
+//!
+//! The idea of Box Algebra and its arithmetic is being developed by Norman J. Wildberger.
+//! He introduces the basic concepts and their applications in a Youtube video series which started in 2022:
+//!
+//! - <https://www.youtube.com/playlist?list=PLIljB45xT85B0aMG-G9oqj-NPIuBMnq8z>
+
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
@@ -183,18 +198,25 @@ impl MBox {
 
             for (b, v1) in self.boxes() {
                 let b = b.annihilate();
-
-                let anti = b.clone().into_anti();
-                // Check if corresponding box is already contained in outer box
-                if let Some(v2) = outer.get_mut(&anti) {
-                    let v2_copy = *v2;
-                    if v1 >= v2_copy {
-                        outer.remove(&anti);
-                        if v1 > v2_copy {
-                            outer.insert(b, v1 - v2_copy);
+                if b.is_anti_box() {
+                    let anti = b.clone().into_anti();
+                    // Check if corresponding box is already contained in outer box
+                    if let Some(v2) = outer.get_mut(&anti) {
+                        let v2_copy = *v2;
+                        if v1 >= v2_copy {
+                            outer.remove(&anti);
+                            if v1 > v2_copy {
+                                outer.insert(b, v1 - v2_copy);
+                            }
+                        } else {
+                            *v2 = v2_copy - v1;
                         }
                     } else {
-                        *v2 = v2_copy - v1;
+                        if let Some(v2) = outer.get_mut(&b) {
+                            *v2 += v1;
+                        } else {
+                            outer.insert(b, v1);
+                        }
                     }
                 } else {
                     if let Some(v2) = outer.get_mut(&b) {
