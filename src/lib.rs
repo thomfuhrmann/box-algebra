@@ -412,14 +412,15 @@ mod tests {
 
         b1.insert(b2, 2);
         b1.insert(MBox::new_anti(), 1);
-        b1.insert(MBox::new(), 1);
+        b1.insert(MBox::new(), 3);
 
         let mut b3 = MBox::new();
-        let b4 = MBox::from(2);
+        let b4 = MBox::from(3);
 
         b3.insert(b4, 2);
+        b3.insert(MBox::new(), 2);
 
-        assert!(b1 < b3);
+        assert!(b3 < b1);
     }
 
     #[test]

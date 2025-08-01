@@ -1,6 +1,6 @@
 [package]
 name = "box-algebra"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "A crate for Box Algebra. This crate defines the fundamental data structure, a mathematical box, and associated methods for doing basic algebraic operations."
 categories = ["mathematics"]
