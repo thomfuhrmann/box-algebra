@@ -16,8 +16,11 @@
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
+    fmt::Display,
     ops::{Add, Mul},
 };
+
+use colored::Colorize;
 
 mod maxel;
 
@@ -26,6 +29,47 @@ mod maxel;
 pub enum MBox {
     Box(BTreeMap<MBox, u64>),
     AntiBox(BTreeMap<MBox, u64>),
+}
+
+impl Display for MBox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // ⌊ ... ⌋
+        let open = if self.is_anti_box() {
+            "⌊".red()
+        } else {
+            "⌊".black()
+        };
+        let close = if self.is_anti_box() {
+            "⌋".red()
+        } else {
+            "⌋".black()
+        };
+
+        write!(f, "{}", open)?;
+
+        let map = self.boxes_ref();
+        for (m_box, count) in map.iter() {
+            // Recurse if the inner box has content
+            if !m_box.is_empty() {
+                for _ in 0..*count {
+                    write!(f, " {}", m_box)?;
+                }
+            } else {
+                // Print the block symbols based on multiplicity
+                let symbol = if m_box.is_anti_box() {
+                    "□".red()
+                } else {
+                    // ■ □
+                    "□".black()
+                };
+                for _ in 0..*count {
+                    write!(f, " {}", symbol)?;
+                }
+            }
+        }
+
+        write!(f, " {}", close)
+    }
 }
 
 impl PartialEq for MBox {
@@ -108,6 +152,7 @@ impl MBox {
         }
     }
 
+    /// Invert the color of a box
     pub fn into_anti(self) -> Self {
         match self {
             MBox::Box(m) => MBox::AntiBox(m),
@@ -147,6 +192,14 @@ impl MBox {
             MBox::Box(m) => m,
             MBox::AntiBox(m) => m,
         }
+    }
+
+    pub fn from_boxes(inner: BTreeMap<MBox, u64>) -> Self {
+        MBox::Box(inner)
+    }
+
+    pub fn from_boxes_anti(inner: BTreeMap<MBox, u64>) -> Self {
+        MBox::AntiBox(inner)
     }
 
     pub fn boxes_ref(&self) -> &BTreeMap<MBox, u64> {
@@ -191,6 +244,64 @@ impl MBox {
             .unwrap_or(0)
     }
 
+    pub fn is_number(&self) -> bool {
+        self.depth() == 1 && self.is_box()
+    }
+
+    pub fn is_anti_number(&self) -> bool {
+        self.depth() == 1 && self.is_anti_box()
+    }
+
+    /// A set is a box (multi-set) with multiplicity of one for each element
+    pub fn is_set(&self) -> bool {
+        self.boxes_ref().iter().all(|(_, mul)| *mul == 1)
+    }
+
+    /// Create the supporting set of the box consisting of the elements of the box but all with multiplicity one
+    pub fn support(&self) -> Self {
+        let inner = self
+            .boxes_ref()
+            .keys()
+            .map(|m_box| (m_box.clone(), 1))
+            .collect();
+        if self.is_box() {
+            Self::from_boxes(inner)
+        } else {
+            Self::from_boxes_anti(inner)
+        }
+    }
+
+    pub fn union(a_box: &MBox, b_box: &MBox) -> Self {
+        let mut result = a_box.clone();
+        let a_map = result.boxes_mut_ref();
+        let b_map = b_box.boxes_ref();
+
+        for (key, &b_count) in b_map {
+            a_map
+                .entry(key.clone())
+                .and_modify(|a_count| *a_count = (*a_count).max(b_count))
+                .or_insert(b_count);
+        }
+
+        result
+    }
+
+    pub fn intersection(a_box: &MBox, b_box: &MBox) -> Self {
+        let a_map = a_box.boxes_ref();
+        let b_map = b_box.boxes_ref();
+
+        let mut result = MBox::new();
+        for (key, a_count) in a_map {
+            if let Some(b_count) = b_map.get(key) {
+                result
+                    .boxes_mut_ref()
+                    .insert(key.clone(), *a_count.min(b_count));
+            }
+        }
+
+        result
+    }
+
     pub fn pow(self, exp: u32) -> Self {
         if exp > 0 {
             let mut m = self.clone();
@@ -205,48 +316,60 @@ impl MBox {
         }
     }
 
+    /// Construct building block for polynumbers
     pub fn alpha() -> Self {
         MBox::from(1).wrap()
     }
 
+    pub fn alpha_anti() -> Self {
+        MBox::from(1).wrap_anti()
+    }
+
     pub fn annihilate(self) -> Self {
-        if self.is_zero() || self.is_anti_zero() {
-            self
-        } else {
-            let mut outer = if self.is_box() {
-                MBox::new()
+        if self.is_empty() {
+            return self;
+        }
+
+        let is_anti = self.is_anti_box();
+
+        // i128 to prevent overflow
+        let mut net_counts: BTreeMap<MBox, i128> = BTreeMap::new();
+
+        for (child, count) in self.into_boxes() {
+            let child = child.annihilate();
+
+            // normalize
+            let multiplier = if child.is_anti_box() { -1 } else { 1 };
+            let normalized_child = if child.is_anti_box() {
+                child.into_anti()
             } else {
-                MBox::new_anti()
+                child
             };
 
-            for (b, v1) in self.into_boxes() {
-                let b = b.annihilate();
-                if b.is_anti_box() {
-                    let anti = b.clone().into_anti();
-                    // Check if corresponding box is already contained in outer box
-                    if let Some(v2) = outer.boxes_mut_ref().get_mut(&anti) {
-                        let v2_copy = *v2;
-                        if v1 >= v2_copy {
-                            outer.boxes_mut_ref().remove(&anti);
-                            if v1 > v2_copy {
-                                outer.boxes_mut_ref().insert(b, v1 - v2_copy);
-                            }
-                        } else {
-                            *v2 = v2_copy - v1;
-                        }
-                    } else if let Some(v2) = outer.boxes_mut_ref().get_mut(&b) {
-                        *v2 += v1;
-                    } else {
-                        outer.boxes_mut_ref().insert(b, v1);
-                    }
-                } else if let Some(v2) = outer.boxes_mut_ref().get_mut(&b) {
-                    *v2 += v1;
-                } else {
-                    outer.boxes_mut_ref().insert(b, v1);
-                }
+            *net_counts.entry(normalized_child).or_default() += (count as i128) * multiplier;
+        }
+
+        // reconstruct the map
+        let mut final_map = BTreeMap::new();
+        for (child, net) in net_counts {
+            if net == 0 {
+                continue;
             }
 
-            outer
+            // if net is negative, the child becomes an anti-box with a positive count
+            let (final_child, final_count) = if net < 0 {
+                (child.into_anti(), net.unsigned_abs() as u64)
+            } else {
+                (child, net as u64)
+            };
+
+            final_map.insert(final_child, final_count);
+        }
+
+        if is_anti {
+            MBox::AntiBox(final_map)
+        } else {
+            MBox::Box(final_map)
         }
     }
 
@@ -288,7 +411,7 @@ impl MBox {
     }
 
     /// A pixel is a 2-list of boxes
-    pub fn pixel(a: MBox, b: MBox) -> Self {
+    pub fn pixel(a: Self, b: Self) -> Self {
         let mut result = Self::new();
         let mut current_sequence = Self::new();
         current_sequence.insert_box(a.clone());
@@ -334,9 +457,9 @@ impl MBox {
     }
 
     /// If a and b are pixels, computes the pixel product required for maxel multiplication
-    pub fn pixel_product(a: &MBox, b: &MBox) -> Option<Self> {
-        let (a_1, a_2) = a.as_pixel_pair()?;
-        let (b_1, b_2) = b.as_pixel_pair()?;
+    pub fn pixel_product(a_box: &MBox, b_box: &MBox) -> Option<Self> {
+        let (a_1, a_2) = a_box.as_pixel_pair()?;
+        let (b_1, b_2) = b_box.as_pixel_pair()?;
 
         if a_2 == b_1 {
             Some(Self::pixel(a_1.clone(), b_2.clone()))
@@ -446,6 +569,32 @@ impl Mul for MBox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_display() {
+        let three = MBox::from(3);
+        println!("{three}");
+
+        let anti_two = MBox::from(-2);
+        println!("{anti_two}");
+
+        let sum = three.clone() + anti_two.clone();
+        println!("{sum}");
+
+        let ann = sum.annihilate();
+        println!("{ann}");
+
+        let alpha = MBox::alpha();
+        let poly = anti_two.clone() + alpha.clone() + MBox::from(1);
+        let poly_ann = poly.clone().annihilate();
+
+        println!("{alpha}");
+        println!("{poly}");
+        println!("{poly_ann}");
+
+        let anti_box = MBox::from(4).into_anti();
+        println!("{anti_box}");
+    }
 
     #[test]
     fn test_depth() {
@@ -637,6 +786,14 @@ mod tests {
         let b = MBox::pixel(MBox::from(3), MBox::from(4));
         let none = MBox::pixel_product(&a, &b);
         assert!(none.is_none());
+
+        let a = MBox::pixel(MBox::from(1), MBox::from(2));
+        let b = MBox::pixel(MBox::from(2), MBox::from(1));
+        let c = MBox::pixel_product(&a, &b).unwrap();
+        println!("{c}");
+
+        let d = MBox::pixel(MBox::from(1), MBox::from(1));
+        println!("{d}");
     }
 
     #[test]
@@ -660,6 +817,7 @@ mod tests {
         expected.insert_box(a_11);
         expected.insert_box(a_12);
         expected.insert_box(b_21);
+        println!("{c}");
         assert_eq!(c, expected);
     }
 }

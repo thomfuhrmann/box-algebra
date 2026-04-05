@@ -11,3 +11,6 @@ license = "MIT"
 exclude = ["src/main.rs"]
 
 [dependencies]
+colored = "3.1.1"
+crossterm = "0.29.0"
+ratatui = "0.30.0"
