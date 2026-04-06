@@ -24,6 +24,25 @@ use colored::Colorize;
 
 mod maxel;
 
+fn to_subscript(n: u64) -> String {
+    n.to_string()
+        .chars()
+        .map(|c| match c {
+            '0' => '₀',
+            '1' => '₁',
+            '2' => '₂',
+            '3' => '₃',
+            '4' => '₄',
+            '5' => '₅',
+            '6' => '₆',
+            '7' => '₇',
+            '8' => '₈',
+            '9' => '₉',
+            _ => c,
+        })
+        .collect()
+}
+
 /// This is the fundamental data structure for mathematical boxes
 #[derive(Debug, Clone)]
 pub enum MBox {
@@ -48,11 +67,23 @@ impl Display for MBox {
         write!(f, "{}", open)?;
 
         let map = self.boxes_ref();
+        let mut first = true;
         for (m_box, count) in map.iter() {
+            if !first {
+                write!(f, " ")?;
+            }
+            first = false;
             // Recurse if the inner box has content
             if !m_box.is_empty() {
-                for _ in 0..*count {
-                    write!(f, " {}", m_box)?;
+                if f.alternate() && *count > 1 {
+                    write!(f, "{}{}", to_subscript(*count), m_box)?;
+                } else {
+                    for i in 0..*count {
+                        if i > 0 {
+                            write!(f, " ")?;
+                        }
+                        m_box.fmt(f)?;
+                    }
                 }
             } else {
                 // Print the block symbols based on multiplicity
@@ -62,13 +93,21 @@ impl Display for MBox {
                     // ■ □
                     "□".black()
                 };
-                for _ in 0..*count {
-                    write!(f, " {}", symbol)?;
+
+                if f.alternate() && *count > 1 {
+                    write!(f, "{}{}", to_subscript(*count), symbol)?;
+                } else {
+                    for i in 0..*count {
+                        if i > 0 {
+                            write!(f, " ")?;
+                        }
+                        write!(f, "{}", symbol)?;
+                    }
                 }
             }
         }
 
-        write!(f, " {}", close)
+        write!(f, "{}", close)
     }
 }
 
@@ -145,21 +184,6 @@ impl MBox {
         Default::default()
     }
 
-    pub fn is_empty(&self) -> bool {
-        match self {
-            MBox::Box(m) => m.is_empty(),
-            MBox::AntiBox(m) => m.is_empty(),
-        }
-    }
-
-    /// Invert the color of a box
-    pub fn into_anti(self) -> Self {
-        match self {
-            MBox::Box(m) => MBox::AntiBox(m),
-            MBox::AntiBox(m) => MBox::Box(m),
-        }
-    }
-
     pub fn new_anti() -> Self {
         MBox::new().into_anti()
     }
@@ -168,6 +192,35 @@ impl MBox {
         match self {
             MBox::Box(_) => 1,
             MBox::AntiBox(_) => -1,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            MBox::Box(m) => m.is_empty(),
+            MBox::AntiBox(m) => m.is_empty(),
+        }
+    }
+
+    /// Invert the color of a box
+    pub fn invert_box(self) -> Self {
+        match self {
+            MBox::Box(m) => MBox::AntiBox(m),
+            MBox::AntiBox(m) => MBox::Box(m),
+        }
+    }
+
+    pub fn into_anti(self) -> Self {
+        match self {
+            MBox::Box(m) => MBox::AntiBox(m),
+            anti => anti,
+        }
+    }
+
+    pub fn into_box(self) -> Self {
+        match self {
+            MBox::AntiBox(m) => MBox::Box(m),
+            m_box => m_box,
         }
     }
 
@@ -271,6 +324,7 @@ impl MBox {
         }
     }
 
+    /// Set union of two boxes
     pub fn union(a_box: &MBox, b_box: &MBox) -> Self {
         let mut result = a_box.clone();
         let a_map = result.boxes_mut_ref();
@@ -286,6 +340,7 @@ impl MBox {
         result
     }
 
+    /// Set intersection of two boxes
     pub fn intersection(a_box: &MBox, b_box: &MBox) -> Self {
         let a_map = a_box.boxes_ref();
         let b_map = b_box.boxes_ref();
@@ -302,6 +357,7 @@ impl MBox {
         result
     }
 
+    /// Exponentiation of boxes
     pub fn pow(self, exp: u32) -> Self {
         if exp > 0 {
             let mut m = self.clone();
@@ -316,15 +372,17 @@ impl MBox {
         }
     }
 
-    /// Construct building block for polynumbers
+    /// Construct the building block of polynumbers
     pub fn alpha() -> Self {
         MBox::from(1).wrap()
     }
 
+    /// Construct the anti-building block of polynumbers
     pub fn alpha_anti() -> Self {
         MBox::from(1).wrap_anti()
     }
 
+    /// Reduce the expression into its simplest form
     pub fn annihilate(self) -> Self {
         if self.is_empty() {
             return self;
@@ -341,7 +399,7 @@ impl MBox {
             // normalize
             let multiplier = if child.is_anti_box() { -1 } else { 1 };
             let normalized_child = if child.is_anti_box() {
-                child.into_anti()
+                child.into_box()
             } else {
                 child
             };
@@ -373,7 +431,8 @@ impl MBox {
         }
     }
 
-    pub fn list(entries: Vec<MBox>) -> Self {
+    /// Convert from a list of boxes into a box representation of this list
+    pub fn from_list(entries: Vec<MBox>) -> Self {
         let mut result = Self::new();
         let mut current_sequence = Self::new();
 
@@ -385,6 +444,36 @@ impl MBox {
         result
     }
 
+    /// Convert from a box representation of a list into its list form
+    pub fn into_list(self) -> Vec<MBox> {
+        assert!(self.is_list());
+        let mut sequences: Vec<MBox> = self.into_boxes().into_keys().collect();
+        sequences.sort_by_key(|m| m.boxes_ref().len());
+
+        let mut result = Vec::new();
+        let mut previous_map: BTreeMap<MBox, u64> = BTreeMap::new();
+
+        for seq in sequences {
+            let current_map = seq.into_boxes();
+
+            for (mbox, &count) in &current_map {
+                let prev_count = previous_map.get(mbox).unwrap_or(&0);
+
+                if count > *prev_count {
+                    // add to result as many times as the count increased
+                    for _ in 0..(count - prev_count) {
+                        result.push(mbox.clone());
+                    }
+                }
+            }
+
+            previous_map = current_map;
+        }
+
+        result
+    }
+
+    /// Test if this box is a list
     pub fn is_list(&self) -> bool {
         let sequences: Vec<&MBox> = self.boxes_ref().keys().collect();
 
@@ -511,38 +600,38 @@ impl From<i32> for MBox {
 
 impl Add for MBox {
     type Output = MBox;
-
-    fn add(self, other: MBox) -> MBox {
-        match self {
-            MBox::Box(mut a) => match other {
-                MBox::Box(b) => {
-                    for (k, v) in b {
-                        a.entry(k).and_modify(|curr| *curr += v).or_insert(v);
-                    }
-                    MBox::Box(a)
-                }
-                MBox::AntiBox(b) => {
-                    for (k, v) in b {
-                        a.entry(k).and_modify(|curr| *curr += v).or_insert(v);
-                    }
-                    MBox::AntiBox(a)
-                }
-            },
-            MBox::AntiBox(mut a) => match other {
-                MBox::Box(b) => {
-                    for (k, v) in b {
-                        a.entry(k).and_modify(|curr| *curr += v).or_insert(v);
-                    }
-                    MBox::AntiBox(a)
-                }
-                MBox::AntiBox(b) => {
-                    for (k, v) in b {
-                        a.entry(k).and_modify(|curr| *curr += v).or_insert(v);
-                    }
-                    MBox::Box(a)
-                }
-            },
+    fn add(mut self, other: Self) -> Self {
+        let result_type = self.box_type() * other.box_type();
+        for (m, count) in other.into_boxes() {
+            *self.boxes_mut_ref().entry(m).or_default() += count;
         }
+
+        if result_type < 0 {
+            self.into_anti()
+        } else {
+            self.into_box()
+        }
+    }
+}
+
+impl std::ops::Add<&MBox> for &MBox {
+    type Output = MBox;
+    fn add(self, other: &MBox) -> MBox {
+        self.clone() + other.clone()
+    }
+}
+
+impl std::ops::Add<&MBox> for MBox {
+    type Output = MBox;
+    fn add(self, other: &MBox) -> MBox {
+        self + other.clone()
+    }
+}
+
+impl std::ops::Add<MBox> for &MBox {
+    type Output = MBox;
+    fn add(self, other: MBox) -> MBox {
+        self.clone() + other
     }
 }
 
@@ -550,19 +639,42 @@ impl Mul for MBox {
     type Output = MBox;
 
     fn mul(self, other: MBox) -> MBox {
-        let mut b = if self.box_type() * other.box_type() == 1 {
+        let mut result = if self.box_type() * other.box_type() > 0 {
             MBox::new()
         } else {
             MBox::new_anti()
         };
 
-        for (b1, v1) in self.boxes_ref() {
+        for (b1, v1) in self.into_boxes() {
             for (b2, v2) in other.boxes_ref() {
-                b.boxes_mut_ref().insert(b1.clone() + b2.clone(), v1 * v2);
+                result
+                    .boxes_mut_ref()
+                    .insert(b1.clone() + b2.clone(), v1 * v2);
             }
         }
 
-        b
+        result
+    }
+}
+
+impl std::ops::Mul<&MBox> for &MBox {
+    type Output = MBox;
+    fn mul(self, other: &MBox) -> MBox {
+        self.clone() * other.clone()
+    }
+}
+
+impl std::ops::Mul<&MBox> for MBox {
+    type Output = MBox;
+    fn mul(self, other: &MBox) -> MBox {
+        self * other.clone()
+    }
+}
+
+impl std::ops::Mul<MBox> for &MBox {
+    type Output = MBox;
+    fn mul(self, other: MBox) -> MBox {
+        self.clone() * other
     }
 }
 
@@ -573,24 +685,26 @@ mod tests {
     #[test]
     fn test_display() {
         let three = MBox::from(3);
-        println!("{three}");
+        println!("{three:#}");
 
         let anti_two = MBox::from(-2);
         println!("{anti_two}");
 
-        let sum = three.clone() + anti_two.clone();
+        let sum = &three + &anti_two;
         println!("{sum}");
 
         let ann = sum.annihilate();
         println!("{ann}");
 
         let alpha = MBox::alpha();
-        let poly = anti_two.clone() + alpha.clone() + MBox::from(1);
-        let poly_ann = poly.clone().annihilate();
-
         println!("{alpha}");
+
+        let poly = &anti_two + &alpha + &alpha + &alpha * &alpha + MBox::from(1);
         println!("{poly}");
-        println!("{poly_ann}");
+        println!("{poly:#}");
+
+        let poly_ann = poly.annihilate();
+        println!("{poly_ann:#}");
 
         let anti_box = MBox::from(4).into_anti();
         println!("{anti_box}");
@@ -604,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn add_1() {
+    fn test_add_1() {
         let three = MBox::from(3);
         let five = MBox::from(5);
         let eight = MBox::from(8);
@@ -672,7 +786,11 @@ mod tests {
         b3.boxes_mut_ref().insert(b4, 2);
         b3.boxes_mut_ref().insert(MBox::new(), 2);
 
-        assert!(b3 < b1);
+        assert!(b3 > b1);
+
+        let b1_ann = b1.annihilate();
+
+        assert!(b3 > b1_ann);
     }
 
     #[test]
@@ -780,6 +898,7 @@ mod tests {
         let b = MBox::pixel(MBox::from(2), MBox::from(1));
         let c = MBox::pixel_product(&a, &b).unwrap();
         let expected = MBox::pixel(MBox::from(2), MBox::from(1));
+        println!("{c:#}");
         assert_eq!(c, expected);
 
         let a = MBox::pixel(MBox::from(1), MBox::from(2));
@@ -790,7 +909,6 @@ mod tests {
         let a = MBox::pixel(MBox::from(1), MBox::from(2));
         let b = MBox::pixel(MBox::from(2), MBox::from(1));
         let c = MBox::pixel_product(&a, &b).unwrap();
-        println!("{c}");
 
         let d = MBox::pixel(MBox::from(1), MBox::from(1));
         println!("{d}");
@@ -817,7 +935,7 @@ mod tests {
         expected.insert_box(a_11);
         expected.insert_box(a_12);
         expected.insert_box(b_21);
-        println!("{c}");
+        println!("{c:#}");
         assert_eq!(c, expected);
     }
 }
