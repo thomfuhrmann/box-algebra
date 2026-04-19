@@ -24,6 +24,7 @@ use colored::Colorize;
 
 mod maxel;
 
+/// Helper function for display of multiplicities as subscripts
 fn to_subscript(n: u64) -> String {
     n.to_string()
         .chars()
@@ -180,14 +181,17 @@ impl Default for MBox {
 }
 
 impl MBox {
+    /// Create a new empty box
     pub fn new() -> Self {
         Default::default()
     }
 
+    /// Create a new empty anti-box
     pub fn new_anti() -> Self {
         MBox::new().into_anti()
     }
 
+    /// Return the type of the box: 1 for a box, and -1 for an anti-box
     pub fn box_type(&self) -> i32 {
         match self {
             MBox::Box(_) => 1,
@@ -195,6 +199,7 @@ impl MBox {
         }
     }
 
+    /// Test if the box is empty
     pub fn is_empty(&self) -> bool {
         match self {
             MBox::Box(m) => m.is_empty(),
@@ -210,13 +215,7 @@ impl MBox {
         }
     }
 
-    pub fn into_anti(self) -> Self {
-        match self {
-            MBox::Box(m) => MBox::AntiBox(m),
-            anti => anti,
-        }
-    }
-
+    /// Convert any box into a box
     pub fn into_box(self) -> Self {
         match self {
             MBox::AntiBox(m) => MBox::Box(m),
@@ -224,22 +223,45 @@ impl MBox {
         }
     }
 
+    /// Convert any box into an anti-box
+    pub fn into_anti(self) -> Self {
+        match self {
+            MBox::Box(m) => MBox::AntiBox(m),
+            anti => anti,
+        }
+    }
+
+    /// Test if the box is a box
     pub fn is_box(&self) -> bool {
         self.box_type() == 1
     }
 
+    /// Test if the box is an anti-box
     pub fn is_anti_box(&self) -> bool {
         self.box_type() == -1
     }
 
+    /// Test if the box is empty
     pub fn is_zero(&self) -> bool {
         self.is_box() && self.is_empty()
     }
 
+    /// Test if the anti-box is empty
     pub fn is_anti_zero(&self) -> bool {
         self.is_anti_box() && self.is_empty()
     }
 
+    /// Wrap the boxes into a box container
+    pub fn from_boxes(inner: BTreeMap<MBox, u64>) -> Self {
+        MBox::Box(inner)
+    }
+
+    /// Wrap the boxes into an anti-box container
+    pub fn from_boxes_anti(inner: BTreeMap<MBox, u64>) -> Self {
+        MBox::AntiBox(inner)
+    }
+
+    /// Consume the box returning its contained boxes
     pub fn into_boxes(self) -> BTreeMap<MBox, u64> {
         match self {
             MBox::Box(m) => m,
@@ -247,14 +269,7 @@ impl MBox {
         }
     }
 
-    pub fn from_boxes(inner: BTreeMap<MBox, u64>) -> Self {
-        MBox::Box(inner)
-    }
-
-    pub fn from_boxes_anti(inner: BTreeMap<MBox, u64>) -> Self {
-        MBox::AntiBox(inner)
-    }
-
+    /// Return a shared reference to the underlying `BTreeMap`
     pub fn boxes_ref(&self) -> &BTreeMap<MBox, u64> {
         match self {
             MBox::Box(m) => m,
@@ -262,6 +277,7 @@ impl MBox {
         }
     }
 
+    /// Return an exclusive reference to the underlying `BTreeMap`
     pub fn boxes_mut_ref(&mut self) -> &mut BTreeMap<MBox, u64> {
         match self {
             MBox::Box(m) => m,
@@ -269,18 +285,21 @@ impl MBox {
         }
     }
 
+    /// Wrap the box into a new box
     pub fn wrap(self) -> Self {
         let mut b = MBox::new();
         b.insert_box(self);
         b
     }
 
+    /// Wrap the box into a new anti-box
     pub fn wrap_anti(self) -> Self {
         let mut b = MBox::new_anti();
         b.insert_box(self);
         b
     }
 
+    /// Insert a box into this box
     pub fn insert_box(&mut self, elem: MBox) {
         self.boxes_mut_ref()
             .entry(elem)
@@ -288,6 +307,7 @@ impl MBox {
             .or_insert(1);
     }
 
+    /// Calculate the maximum depth of this box
     pub fn depth(&self) -> usize {
         self.boxes_ref()
             .keys()
@@ -297,15 +317,22 @@ impl MBox {
             .unwrap_or(0)
     }
 
+    /// Calculate the size of this box (number of elements)
+    pub fn size(&self) -> u64 {
+        self.boxes_ref().iter().fold(0, |acc, (_, mul)| acc + mul)
+    }
+
+    /// Test if this box is a number
     pub fn is_number(&self) -> bool {
         self.depth() == 1 && self.is_box()
     }
 
+    /// Test if this box is an anti-number
     pub fn is_anti_number(&self) -> bool {
         self.depth() == 1 && self.is_anti_box()
     }
 
-    /// A set is a box (multi-set) with multiplicity of one for each element
+    /// A set is a box (multi-set) with all its elements having multiplicity one
     pub fn is_set(&self) -> bool {
         self.boxes_ref().iter().all(|(_, mul)| *mul == 1)
     }
@@ -355,6 +382,11 @@ impl MBox {
         }
 
         result
+    }
+
+    /// Return n-times the box
+    pub fn scale(&self, n: u64) -> Self {
+        (0..n).fold(MBox::new(), |acc, _| acc + self.clone())
     }
 
     /// Exponentiation of boxes
@@ -497,6 +529,42 @@ impl MBox {
         }
 
         true
+    }
+
+    /// Return k-th element of a list
+    pub fn get_kth(&self, k: u64) -> Option<Self> {
+        assert!(self.is_list());
+        if let Some((m_box, _)) = self.boxes_ref().iter().find(|(m_box, _)| m_box.size() == k) {
+            return Some(m_box.clone());
+        }
+        None
+    }
+
+    /// Test if this box is a box of lists
+    pub fn is_list_box(&self) -> bool {
+        self.boxes_ref().iter().all(|(m_box, _)| m_box.is_list())
+    }
+
+    // ToDo: Implement truncation == filter
+    // First and second support boxes of maxels
+    // Function: is a box whose first support box is a set = domain
+    // Function: supporting set of second support box = range
+    // Composition: F * G
+
+    /// If this is a list box, then project onto the k-th element of each list in the box
+    pub fn project_k(&self, k: u64) -> Self {
+        assert!(self.is_list_box());
+        let inner = self
+            .boxes_ref()
+            .iter()
+            .filter_map(|(m_box, mul)| m_box.get_kth(k).map(|v| (v, *mul)))
+            .collect();
+
+        if self.is_anti_box() {
+            MBox::from_boxes_anti(inner)
+        } else {
+            MBox::from_boxes(inner)
+        }
     }
 
     /// A pixel is a 2-list of boxes
@@ -675,6 +743,14 @@ impl std::ops::Mul<MBox> for &MBox {
     type Output = MBox;
     fn mul(self, other: MBox) -> MBox {
         self.clone() * other
+    }
+}
+
+impl FromIterator<MBox> for MBox {
+    fn from_iter<T: IntoIterator<Item = MBox>>(iter: T) -> Self {
+        let mut result = MBox::new();
+        iter.into_iter().for_each(|m_box| result.insert_box(m_box));
+        result
     }
 }
 
