@@ -24,7 +24,7 @@ use colored::Colorize;
 
 mod maxel;
 
-/// Helper function for display of multiplicities as subscripts
+/// Helper function to display multiplicities as subscripts
 fn to_subscript(n: u64) -> String {
     n.to_string()
         .chars()
@@ -44,7 +44,7 @@ fn to_subscript(n: u64) -> String {
         .collect()
 }
 
-/// This is the fundamental data structure for mathematical boxes
+/// The fundamental data structure for mathematical boxes
 #[derive(Debug, Clone)]
 pub enum MBox {
     Box(BTreeMap<MBox, u64>),
@@ -181,17 +181,17 @@ impl Default for MBox {
 }
 
 impl MBox {
-    /// Create a new empty box
+    /// Creates a new empty box
     pub fn new() -> Self {
         Default::default()
     }
 
-    /// Create a new empty anti-box
+    /// Creates a new empty anti-box
     pub fn new_anti() -> Self {
         MBox::new().into_anti()
     }
 
-    /// Return the type of the box: 1 for a box, and -1 for an anti-box
+    /// Return sthe type of the box: 1 for a box, and -1 for an anti-box
     pub fn box_type(&self) -> i32 {
         match self {
             MBox::Box(_) => 1,
@@ -199,7 +199,7 @@ impl MBox {
         }
     }
 
-    /// Test if the box is empty
+    /// Tests if the box is empty
     pub fn is_empty(&self) -> bool {
         match self {
             MBox::Box(m) => m.is_empty(),
@@ -207,7 +207,7 @@ impl MBox {
         }
     }
 
-    /// Invert the color of a box
+    /// Inverts the color of a box
     pub fn invert_box(self) -> Self {
         match self {
             MBox::Box(m) => MBox::AntiBox(m),
@@ -215,7 +215,7 @@ impl MBox {
         }
     }
 
-    /// Convert any box into a box
+    /// Converts a box into a box
     pub fn into_box(self) -> Self {
         match self {
             MBox::AntiBox(m) => MBox::Box(m),
@@ -223,7 +223,7 @@ impl MBox {
         }
     }
 
-    /// Convert any box into an anti-box
+    /// Converts a box into an anti-box
     pub fn into_anti(self) -> Self {
         match self {
             MBox::Box(m) => MBox::AntiBox(m),
@@ -231,37 +231,37 @@ impl MBox {
         }
     }
 
-    /// Test if the box is a box
+    /// Tests if the box is a box
     pub fn is_box(&self) -> bool {
         self.box_type() == 1
     }
 
-    /// Test if the box is an anti-box
+    /// Tests if the box is an anti-box
     pub fn is_anti_box(&self) -> bool {
         self.box_type() == -1
     }
 
-    /// Test if the box is empty
+    /// Tests if the box is empty
     pub fn is_zero(&self) -> bool {
         self.is_box() && self.is_empty()
     }
 
-    /// Test if the anti-box is empty
+    /// Tests if the anti-box is empty
     pub fn is_anti_zero(&self) -> bool {
         self.is_anti_box() && self.is_empty()
     }
 
-    /// Wrap the boxes into a box container
+    /// Wraps the boxes into a box container
     pub fn from_boxes(inner: BTreeMap<MBox, u64>) -> Self {
         MBox::Box(inner)
     }
 
-    /// Wrap the boxes into an anti-box container
+    /// Wraps the boxes into an anti-box container
     pub fn from_boxes_anti(inner: BTreeMap<MBox, u64>) -> Self {
         MBox::AntiBox(inner)
     }
 
-    /// Consume the box returning its contained boxes
+    /// Consumes the box returning its contained boxes
     pub fn into_boxes(self) -> BTreeMap<MBox, u64> {
         match self {
             MBox::Box(m) => m,
@@ -269,7 +269,7 @@ impl MBox {
         }
     }
 
-    /// Return a shared reference to the underlying `BTreeMap`
+    /// Returns a shared reference to the underlying `BTreeMap`
     pub fn boxes_ref(&self) -> &BTreeMap<MBox, u64> {
         match self {
             MBox::Box(m) => m,
@@ -277,7 +277,7 @@ impl MBox {
         }
     }
 
-    /// Return an exclusive reference to the underlying `BTreeMap`
+    /// Returns an exclusive reference to the underlying `BTreeMap`
     pub fn boxes_mut_ref(&mut self) -> &mut BTreeMap<MBox, u64> {
         match self {
             MBox::Box(m) => m,
@@ -285,21 +285,21 @@ impl MBox {
         }
     }
 
-    /// Wrap the box into a new box
+    /// Wraps the box into a new box
     pub fn wrap(self) -> Self {
         let mut b = MBox::new();
         b.insert_box(self);
         b
     }
 
-    /// Wrap the box into a new anti-box
+    /// Wraps the box into a new anti-box
     pub fn wrap_anti(self) -> Self {
         let mut b = MBox::new_anti();
         b.insert_box(self);
         b
     }
 
-    /// Insert a box into this box
+    /// Inserts a box into this box
     pub fn insert_box(&mut self, elem: MBox) {
         self.boxes_mut_ref()
             .entry(elem)
@@ -307,7 +307,7 @@ impl MBox {
             .or_insert(1);
     }
 
-    /// Calculate the maximum depth of this box
+    /// Calculates the maximum depth of this box
     pub fn depth(&self) -> usize {
         self.boxes_ref()
             .keys()
@@ -317,17 +317,17 @@ impl MBox {
             .unwrap_or(0)
     }
 
-    /// Calculate the size of this box (number of elements)
+    /// Calculates the size of this box (number of elements including multiplicities)
     pub fn size(&self) -> u64 {
         self.boxes_ref().iter().fold(0, |acc, (_, mul)| acc + mul)
     }
 
-    /// Test if this box is a number
+    /// Tests if this box is a number
     pub fn is_number(&self) -> bool {
         self.depth() == 1 && self.is_box()
     }
 
-    /// Test if this box is an anti-number
+    /// Tests if this box is an anti-number
     pub fn is_anti_number(&self) -> bool {
         self.depth() == 1 && self.is_anti_box()
     }
@@ -337,7 +337,7 @@ impl MBox {
         self.boxes_ref().iter().all(|(_, mul)| *mul == 1)
     }
 
-    /// Create the supporting set of the box consisting of the elements of the box but all with multiplicity one
+    /// Creates the supporting set of a box consisting of all its elements but with multiplicity one
     pub fn support(&self) -> Self {
         let inner = self
             .boxes_ref()
@@ -384,7 +384,7 @@ impl MBox {
         result
     }
 
-    /// Return n-times the box
+    /// Returns n-times the box
     pub fn scale(&self, n: u64) -> Self {
         (0..n).fold(MBox::new(), |acc, _| acc + self.clone())
     }
@@ -404,17 +404,17 @@ impl MBox {
         }
     }
 
-    /// Construct the building block of polynumbers
+    /// Constructs the building block of polynumbers
     pub fn alpha() -> Self {
         MBox::from(1).wrap()
     }
 
-    /// Construct the anti-building block of polynumbers
+    /// Constructs the anti-building block of polynumbers
     pub fn alpha_anti() -> Self {
         MBox::from(1).wrap_anti()
     }
 
-    /// Reduce the expression into its simplest form
+    /// Reduces the expression by annihilation of box-anti-box couples
     pub fn annihilate(self) -> Self {
         if self.is_empty() {
             return self;
@@ -463,7 +463,7 @@ impl MBox {
         }
     }
 
-    /// Convert from a list of boxes into a box representation of this list
+    /// Converts from a list of boxes into a box representation of this list
     pub fn from_list(entries: Vec<MBox>) -> Self {
         let mut result = Self::new();
         let mut current_sequence = Self::new();
@@ -476,9 +476,11 @@ impl MBox {
         result
     }
 
-    /// Convert from a box representation of a list into its list form
-    pub fn into_list(self) -> Vec<MBox> {
-        assert!(self.is_list());
+    /// Converts from a box into its list form (if the box is a list)
+    pub fn into_list(self) -> Option<Vec<MBox>> {
+        if !self.is_list() {
+            return None;
+        }
         let mut sequences: Vec<MBox> = self.into_boxes().into_keys().collect();
         sequences.sort_by_key(|m| m.boxes_ref().len());
 
@@ -502,7 +504,7 @@ impl MBox {
             previous_map = current_map;
         }
 
-        result
+        Some(result)
     }
 
     /// Test if this box is a list
@@ -531,33 +533,84 @@ impl MBox {
         true
     }
 
-    /// Return k-th element of a list
-    pub fn get_kth(&self, k: u64) -> Option<Self> {
-        assert!(self.is_list());
-        if let Some((m_box, _)) = self.boxes_ref().iter().find(|(m_box, _)| m_box.size() == k) {
-            return Some(m_box.clone());
-        }
-        None
-    }
-
-    /// Test if this box is a box of lists
+    /// Tests if the box is a box of lists
     pub fn is_list_box(&self) -> bool {
         self.boxes_ref().iter().all(|(m_box, _)| m_box.is_list())
     }
 
-    // ToDo: Implement truncation == filter
+    /// Returns the first item that is in self but not in other
+    fn diff_one(&self, other: &Self) -> Option<Self> {
+        for (item, count) in self.boxes_ref() {
+            if let Some((_, other_count)) = other.boxes_ref().get_key_value(item) {
+                if count > other_count {
+                    return Some(item.clone());
+                }
+            } else {
+                return Some(item.clone());
+            }
+        }
+        None
+    }
+
+    /// Returns the k-th element of a list
+    pub fn get_kth(&self, k: usize) -> Option<Self> {
+        if !self.is_list() {
+            return None;
+        }
+
+        let mut sequences: Vec<MBox> = self.clone().into_boxes().into_keys().collect();
+        sequences.sort_by_key(|m| m.boxes_ref().len());
+
+        if k >= sequences.len() {
+            return None;
+        }
+
+        if k == 0
+            && let Some((m_box, _)) = sequences[0].boxes_ref().first_key_value()
+        {
+            return Some(m_box.clone());
+        }
+
+        let pre_box = &sequences[k - 1];
+        let curr_box = &sequences[k];
+
+        curr_box.diff_one(pre_box)
+    }
+
+    /// Returns the box consisting of all the k-th entries of its contained lists
+    pub fn k_proj_list_box(&self, k: usize) -> Self {
+        if !self.is_list_box() {
+            if self.is_anti_box() {
+                return Self::new_anti();
+            } else {
+                return Self::new();
+            }
+        }
+
+        self.boxes_ref()
+            .iter()
+            .filter_map(|(m_box, _)| m_box.get_kth(k))
+            .collect()
+    }
+
+    /// Tests if this box is an ordered set (a list in which every entry occurs once)
+    pub fn is_ordered_set(&self) -> bool {
+        self.is_list() && self.is_set()
+    }
+
+    // ToDo:
     // First and second support boxes of maxels
     // Function: is a box whose first support box is a set = domain
     // Function: supporting set of second support box = range
     // Composition: F * G
 
-    /// If this is a list box, then project onto the k-th element of each list in the box
-    pub fn project_k(&self, k: u64) -> Self {
-        assert!(self.is_list_box());
+    /// Truncates the box to the box given as an argument
+    pub fn truncation(&self, trunc: &Self) -> Self {
         let inner = self
-            .boxes_ref()
-            .iter()
-            .filter_map(|(m_box, mul)| m_box.get_kth(k).map(|v| (v, *mul)))
+            .clone()
+            .into_boxes()
+            .into_iter()
+            .filter(|(m_box, _)| m_box == trunc)
             .collect();
 
         if self.is_anti_box() {
@@ -565,6 +618,12 @@ impl MBox {
         } else {
             MBox::from_boxes(inner)
         }
+    }
+
+    /// Tests if the box is a function
+    pub fn is_function(&self) -> bool {
+        // self.boxes_ref().iter().
+        true
     }
 
     /// A pixel is a 2-list of boxes
@@ -578,26 +637,27 @@ impl MBox {
         result
     }
 
-    /// Test if the box is a pixel
+    /// Tests if the box is a pixel
     pub fn is_pixel(&self) -> bool {
         self.boxes_ref().len() == 2 && self.is_list()
     }
 
-    /// Test if the box contains only one element
+    /// Tests if the box contains only one element
     pub fn is_singleton(&self) -> bool {
         self.boxes_ref().len() == 1
     }
 
-    /// Test if the box is a vexel which is defined as a box of singletons
+    /// Tests if the box is a vexel which is defined as a box of singletons
     pub fn is_vexel(&self) -> bool {
         self.boxes_ref().iter().all(|(b, _)| b.is_singleton())
     }
 
-    /// Test if the box is a maxel which is defined as a box of pixels
+    /// Tests if the box is a maxel which is defined as a box of pixels
     pub fn is_maxel(&self) -> bool {
         self.boxes_ref().iter().all(|(b, _)| b.is_pixel())
     }
 
+    /// Converts to a pair of boxes
     pub fn as_pixel_pair(&self) -> Option<(&MBox, &MBox)> {
         let mut iter = self.boxes_ref().keys();
         let first = iter.next()?;
@@ -624,7 +684,8 @@ impl MBox {
             None
         }
     }
-    /// Compute the product of two maxels
+
+    /// Computes the product of two maxels
     pub fn maxel_product(a_box: &MBox, b_box: &MBox) -> Self {
         assert!(a_box.is_maxel());
         assert!(b_box.is_maxel());
@@ -1013,5 +1074,27 @@ mod tests {
         expected.insert_box(b_21);
         println!("{c:#}");
         assert_eq!(c, expected);
+    }
+
+    #[test]
+    fn test_list_1() {
+        let a = MBox::from(1);
+        let b = MBox::from(2);
+        let c = MBox::from(3);
+        let vec = vec![a, b, c];
+
+        let m_box = MBox::from_list(vec);
+
+        assert_eq!(m_box.get_kth(0), Some(MBox::from(1)));
+        assert_eq!(m_box.get_kth(1), Some(MBox::from(2)));
+        assert_eq!(m_box.get_kth(2), Some(MBox::from(3)));
+
+        let a = MBox::from(2);
+        let b = MBox::from(2);
+        let c = MBox::from(3);
+        let vec = vec![a, b, c];
+        let m_box = MBox::from_list(vec);
+
+        // assert_eq!(m_box.get_kth(1), Some(MBox::from(2)));
     }
 }
