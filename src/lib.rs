@@ -13,103 +13,23 @@
 //!
 //! - <https://www.youtube.com/playlist?list=PLIljB45xT85B0aMG-G9oqj-NPIuBMnq8z>
 
-use std::{
-    cmp::Ordering,
-    collections::BTreeMap,
-    fmt::Display,
-    ops::{Add, Mul},
-};
+use std::{cmp::Ordering, collections::BTreeMap};
 
-use colored::Colorize;
-
+#[macro_use]
 mod maxel;
-
-/// Helper function to display multiplicities as subscripts
-fn to_subscript(n: u64) -> String {
-    n.to_string()
-        .chars()
-        .map(|c| match c {
-            '0' => '₀',
-            '1' => '₁',
-            '2' => '₂',
-            '3' => '₃',
-            '4' => '₄',
-            '5' => '₅',
-            '6' => '₆',
-            '7' => '₇',
-            '8' => '₈',
-            '9' => '₉',
-            _ => c,
-        })
-        .collect()
-}
+mod display;
+mod function;
+#[macro_use]
+mod list;
+#[macro_use]
+mod polynumber;
+mod set;
 
 /// The fundamental data structure for mathematical boxes
 #[derive(Debug, Clone)]
 pub enum MBox {
     Box(BTreeMap<MBox, u64>),
     AntiBox(BTreeMap<MBox, u64>),
-}
-
-impl Display for MBox {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // ⌊ ... ⌋
-        let open = if self.is_anti_box() {
-            "⌊".red()
-        } else {
-            "⌊".black()
-        };
-        let close = if self.is_anti_box() {
-            "⌋".red()
-        } else {
-            "⌋".black()
-        };
-
-        write!(f, "{}", open)?;
-
-        let map = self.boxes_ref();
-        let mut first = true;
-        for (m_box, count) in map.iter() {
-            if !first {
-                write!(f, " ")?;
-            }
-            first = false;
-            // Recurse if the inner box has content
-            if !m_box.is_empty() {
-                if f.alternate() && *count > 1 {
-                    write!(f, "{}{}", to_subscript(*count), m_box)?;
-                } else {
-                    for i in 0..*count {
-                        if i > 0 {
-                            write!(f, " ")?;
-                        }
-                        m_box.fmt(f)?;
-                    }
-                }
-            } else {
-                // Print the block symbols based on multiplicity
-                let symbol = if m_box.is_anti_box() {
-                    "□".red()
-                } else {
-                    // ■ □
-                    "□".black()
-                };
-
-                if f.alternate() && *count > 1 {
-                    write!(f, "{}{}", to_subscript(*count), symbol)?;
-                } else {
-                    for i in 0..*count {
-                        if i > 0 {
-                            write!(f, " ")?;
-                        }
-                        write!(f, "{}", symbol)?;
-                    }
-                }
-            }
-        }
-
-        write!(f, "{}", close)
-    }
 }
 
 impl PartialEq for MBox {
@@ -285,6 +205,14 @@ impl MBox {
         }
     }
 
+    /// Inserts a box into this box
+    pub fn insert_box(&mut self, elem: MBox) {
+        self.boxes_mut_ref()
+            .entry(elem)
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
+    }
+
     /// Wraps the box into a new box
     pub fn wrap(self) -> Self {
         let mut b = MBox::new();
@@ -297,14 +225,6 @@ impl MBox {
         let mut b = MBox::new_anti();
         b.insert_box(self);
         b
-    }
-
-    /// Inserts a box into this box
-    pub fn insert_box(&mut self, elem: MBox) {
-        self.boxes_mut_ref()
-            .entry(elem)
-            .and_modify(|count| *count += 1)
-            .or_insert(1);
     }
 
     /// Calculates the maximum depth of this box
@@ -332,58 +252,6 @@ impl MBox {
         self.depth() == 1 && self.is_anti_box()
     }
 
-    /// A set is a box (multi-set) with all its elements having multiplicity one
-    pub fn is_set(&self) -> bool {
-        self.boxes_ref().iter().all(|(_, mul)| *mul == 1)
-    }
-
-    /// Creates the supporting set of a box consisting of all its elements but with multiplicity one
-    pub fn support(&self) -> Self {
-        let inner = self
-            .boxes_ref()
-            .keys()
-            .map(|m_box| (m_box.clone(), 1))
-            .collect();
-        if self.is_box() {
-            Self::from_boxes(inner)
-        } else {
-            Self::from_boxes_anti(inner)
-        }
-    }
-
-    /// Set union of two boxes
-    pub fn union(a_box: &MBox, b_box: &MBox) -> Self {
-        let mut result = a_box.clone();
-        let a_map = result.boxes_mut_ref();
-        let b_map = b_box.boxes_ref();
-
-        for (key, &b_count) in b_map {
-            a_map
-                .entry(key.clone())
-                .and_modify(|a_count| *a_count = (*a_count).max(b_count))
-                .or_insert(b_count);
-        }
-
-        result
-    }
-
-    /// Set intersection of two boxes
-    pub fn intersection(a_box: &MBox, b_box: &MBox) -> Self {
-        let a_map = a_box.boxes_ref();
-        let b_map = b_box.boxes_ref();
-
-        let mut result = MBox::new();
-        for (key, a_count) in a_map {
-            if let Some(b_count) = b_map.get(key) {
-                result
-                    .boxes_mut_ref()
-                    .insert(key.clone(), *a_count.min(b_count));
-            }
-        }
-
-        result
-    }
-
     /// Returns n-times the box
     pub fn scale(&self, n: u64) -> Self {
         (0..n).fold(MBox::new(), |acc, _| acc + self.clone())
@@ -402,16 +270,6 @@ impl MBox {
         } else {
             MBox::from(1)
         }
-    }
-
-    /// Constructs the building block of polynumbers
-    pub fn alpha() -> Self {
-        MBox::from(1).wrap()
-    }
-
-    /// Constructs the anti-building block of polynumbers
-    pub fn alpha_anti() -> Self {
-        MBox::from(1).wrap_anti()
     }
 
     /// Reduces the expression by annihilation of box-anti-box couples
@@ -463,149 +321,8 @@ impl MBox {
         }
     }
 
-    /// Converts from a list of boxes into a box representation of this list
-    pub fn from_list(entries: Vec<MBox>) -> Self {
-        let mut result = Self::new();
-        let mut current_sequence = Self::new();
-
-        for e in entries {
-            current_sequence.insert_box(e);
-            result.insert_box(current_sequence.clone());
-        }
-
-        result
-    }
-
-    /// Converts from a box into its list form (if the box is a list)
-    pub fn into_list(self) -> Option<Vec<MBox>> {
-        if !self.is_list() {
-            return None;
-        }
-        let mut sequences: Vec<MBox> = self.into_boxes().into_keys().collect();
-        sequences.sort_by_key(|m| m.boxes_ref().len());
-
-        let mut result = Vec::new();
-        let mut previous_map: BTreeMap<MBox, u64> = BTreeMap::new();
-
-        for seq in sequences {
-            let current_map = seq.into_boxes();
-
-            for (mbox, &count) in &current_map {
-                let prev_count = previous_map.get(mbox).unwrap_or(&0);
-
-                if count > *prev_count {
-                    // add to result as many times as the count increased
-                    for _ in 0..(count - prev_count) {
-                        result.push(mbox.clone());
-                    }
-                }
-            }
-
-            previous_map = current_map;
-        }
-
-        Some(result)
-    }
-
-    /// Test if this box is a list
-    pub fn is_list(&self) -> bool {
-        let sequences: Vec<&MBox> = self.boxes_ref().keys().collect();
-
-        if sequences.is_empty() {
-            return true;
-        }
-
-        for i in 0..sequences.len() - 1 {
-            let current = sequences[i];
-            let next = sequences[i + 1];
-
-            for (curr_box, curr_mul) in current.boxes_ref() {
-                if let Some(next_mul) = next.boxes_ref().get(curr_box) {
-                    if next_mul != curr_mul && *next_mul != *curr_mul + 1 {
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-            }
-        }
-
-        true
-    }
-
-    /// Tests if the box is a box of lists
-    pub fn is_list_box(&self) -> bool {
-        self.boxes_ref().iter().all(|(m_box, _)| m_box.is_list())
-    }
-
-    /// Returns the first item that is in self but not in other
-    fn diff_one(&self, other: &Self) -> Option<Self> {
-        for (item, count) in self.boxes_ref() {
-            if let Some((_, other_count)) = other.boxes_ref().get_key_value(item) {
-                if count > other_count {
-                    return Some(item.clone());
-                }
-            } else {
-                return Some(item.clone());
-            }
-        }
-        None
-    }
-
-    /// Returns the k-th element of a list
-    pub fn get_kth(&self, k: usize) -> Option<Self> {
-        if !self.is_list() {
-            return None;
-        }
-
-        let mut sequences: Vec<MBox> = self.clone().into_boxes().into_keys().collect();
-        sequences.sort_by_key(|m| m.boxes_ref().len());
-
-        if k >= sequences.len() {
-            return None;
-        }
-
-        if k == 0
-            && let Some((m_box, _)) = sequences[0].boxes_ref().first_key_value()
-        {
-            return Some(m_box.clone());
-        }
-
-        let pre_box = &sequences[k - 1];
-        let curr_box = &sequences[k];
-
-        curr_box.diff_one(pre_box)
-    }
-
-    /// Returns the box consisting of all the k-th entries of its contained lists
-    pub fn k_proj_list_box(&self, k: usize) -> Self {
-        if !self.is_list_box() {
-            if self.is_anti_box() {
-                return Self::new_anti();
-            } else {
-                return Self::new();
-            }
-        }
-
-        self.boxes_ref()
-            .iter()
-            .filter_map(|(m_box, _)| m_box.get_kth(k))
-            .collect()
-    }
-
-    /// Tests if this box is an ordered set (a list in which every entry occurs once)
-    pub fn is_ordered_set(&self) -> bool {
-        self.is_list() && self.is_set()
-    }
-
-    // ToDo:
-    // First and second support boxes of maxels
-    // Function: is a box whose first support box is a set = domain
-    // Function: supporting set of second support box = range
-    // Composition: F * G
-
     /// Truncates the box to the box given as an argument
-    pub fn truncation(&self, trunc: &Self) -> Self {
+    pub fn truncate(&self, trunc: &Self) -> Self {
         let inner = self
             .clone()
             .into_boxes()
@@ -620,94 +337,26 @@ impl MBox {
         }
     }
 
-    /// Tests if the box is a function
-    pub fn is_function(&self) -> bool {
-        // self.boxes_ref().iter().
-        true
+    /// Tests if this box is an ordered set (a list in which every entry occurs once)
+    pub fn is_ordered_set(&self) -> bool {
+        self.is_list() && self.is_set()
     }
+}
 
-    /// A pixel is a 2-list of boxes
-    pub fn pixel(a: Self, b: Self) -> Self {
-        let mut result = Self::new();
-        let mut current_sequence = Self::new();
-        current_sequence.insert_box(a.clone());
-        result.insert_box(current_sequence.clone());
-        current_sequence.insert_box(b);
-        result.insert_box(current_sequence);
-        result
-    }
-
-    /// Tests if the box is a pixel
-    pub fn is_pixel(&self) -> bool {
-        self.boxes_ref().len() == 2 && self.is_list()
-    }
-
-    /// Tests if the box contains only one element
-    pub fn is_singleton(&self) -> bool {
-        self.boxes_ref().len() == 1
-    }
-
-    /// Tests if the box is a vexel which is defined as a box of singletons
-    pub fn is_vexel(&self) -> bool {
-        self.boxes_ref().iter().all(|(b, _)| b.is_singleton())
-    }
-
-    /// Tests if the box is a maxel which is defined as a box of pixels
-    pub fn is_maxel(&self) -> bool {
-        self.boxes_ref().iter().all(|(b, _)| b.is_pixel())
-    }
-
-    /// Converts to a pair of boxes
-    pub fn as_pixel_pair(&self) -> Option<(&MBox, &MBox)> {
-        let mut iter = self.boxes_ref().keys();
-        let first = iter.next()?;
-        let first_box = first.boxes_ref().keys().next()?;
-
-        let second = iter.next()?;
-        let second_box = second
-            .boxes_ref()
-            .iter()
-            .find(|&(m_box, &mul)| if m_box == first_box { mul > 1 } else { true })?
-            .0;
-
-        Some((first_box, second_box))
-    }
-
-    /// If a and b are pixels, computes the pixel product required for maxel multiplication
-    pub fn pixel_product(a_box: &MBox, b_box: &MBox) -> Option<Self> {
-        let (a_1, a_2) = a_box.as_pixel_pair()?;
-        let (b_1, b_2) = b_box.as_pixel_pair()?;
-
-        if a_2 == b_1 {
-            Some(Self::pixel(a_1.clone(), b_2.clone()))
-        } else {
-            None
-        }
-    }
-
-    /// Computes the product of two maxels
-    pub fn maxel_product(a_box: &MBox, b_box: &MBox) -> Self {
-        assert!(a_box.is_maxel());
-        assert!(b_box.is_maxel());
-
-        let mut result = Self::new();
-        for (a_pix, a_mul) in a_box.boxes_ref() {
-            for (b_pix, b_mul) in b_box.boxes_ref() {
-                if let Some(pix) = Self::pixel_product(a_pix, b_pix) {
-                    result.boxes_mut_ref().insert(pix, a_mul * b_mul);
-                }
-            }
-        }
-
+impl FromIterator<MBox> for MBox {
+    fn from_iter<T: IntoIterator<Item = MBox>>(iter: T) -> Self {
+        let mut result = MBox::new();
+        iter.into_iter().for_each(|m_box| result.insert_box(m_box));
         result
     }
 }
 
 impl From<u32> for MBox {
     fn from(value: u32) -> Self {
-        let e = MBox::new();
         let mut m = MBox::new();
-        m.boxes_mut_ref().insert(e, value.into());
+        if value > 0 {
+            m.boxes_mut_ref().insert(MBox::new(), value.into());
+        }
         m
     }
 }
@@ -715,19 +364,16 @@ impl From<u32> for MBox {
 impl From<i32> for MBox {
     fn from(value: i32) -> Self {
         let mut m = MBox::new();
-        if value >= 0 {
-            let e = MBox::new();
-            m.boxes_mut_ref().insert(e, value as u64);
-            m
-        } else {
-            let e = MBox::new_anti();
-            m.boxes_mut_ref().insert(e, (-value) as u64);
-            m
+        if value > 0 {
+            m.boxes_mut_ref().insert(MBox::new(), value as u64);
+        } else if value < 0 {
+            m.boxes_mut_ref().insert(MBox::new_anti(), (-value) as u64);
         }
+        m
     }
 }
 
-impl Add for MBox {
+impl std::ops::Add for MBox {
     type Output = MBox;
     fn add(mut self, other: Self) -> Self {
         let result_type = self.box_type() * other.box_type();
@@ -764,7 +410,7 @@ impl std::ops::Add<MBox> for &MBox {
     }
 }
 
-impl Mul for MBox {
+impl std::ops::Mul for MBox {
     type Output = MBox;
 
     fn mul(self, other: MBox) -> MBox {
@@ -807,12 +453,24 @@ impl std::ops::Mul<MBox> for &MBox {
     }
 }
 
-impl FromIterator<MBox> for MBox {
-    fn from_iter<T: IntoIterator<Item = MBox>>(iter: T) -> Self {
-        let mut result = MBox::new();
-        iter.into_iter().for_each(|m_box| result.insert_box(m_box));
-        result
-    }
+#[macro_export]
+macro_rules! m_box {
+    ($($p:expr),* $(,)?) => {
+        {
+            let mut outer_box = $crate::MBox::new();
+            $(
+                outer_box.insert_box(($p).into());
+            )*
+            outer_box
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! n {
+    ($e:expr) => {
+        $crate::MBox::from($e)
+    };
 }
 
 #[cfg(test)]
@@ -820,56 +478,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_display() {
-        let three = MBox::from(3);
-        println!("{three:#}");
-
-        let anti_two = MBox::from(-2);
-        println!("{anti_two}");
-
-        let sum = &three + &anti_two;
-        println!("{sum}");
-
-        let ann = sum.annihilate();
-        println!("{ann}");
-
-        let alpha = MBox::alpha();
-        println!("{alpha}");
-
-        let poly = &anti_two + &alpha + &alpha + &alpha * &alpha + MBox::from(1);
-        println!("{poly}");
-        println!("{poly:#}");
-
-        let poly_ann = poly.annihilate();
-        println!("{poly_ann:#}");
-
-        let anti_box = MBox::from(4).into_anti();
-        println!("{anti_box}");
-    }
-
-    #[test]
     fn test_depth() {
-        let pix = MBox::pixel(MBox::from(1), MBox::from(2));
+        let pix = pixel![1, 2];
         let dep = pix.depth();
         assert_eq!(dep, 3);
     }
 
     #[test]
     fn test_add_1() {
-        let three = MBox::from(3);
-        let five = MBox::from(5);
-        let eight = MBox::from(8);
+        let three = n!(3);
+        let five = n!(5);
+        let eight = n!(8);
         assert_eq!(three + five, eight);
 
-        let four = MBox::from(4);
-        let alpha_5 = MBox::alpha().pow(5);
-
+        let four = n!(4);
+        let alpha_5 = x!().pow(5);
         let mut b0 = MBox::new();
         let b1 = MBox::new();
-        let b2 = MBox::from(5);
+        let b2 = n!(5);
         b0.boxes_mut_ref().insert(b1, 4);
         b0.boxes_mut_ref().insert(b2, 1);
-
         assert_eq!(four + alpha_5, b0);
 
         let b1 = MBox::new();
@@ -877,19 +505,12 @@ mod tests {
         let b3 = MBox::new();
         assert_eq!(b1 + b2, b3);
 
-        let b1 = MBox::from(0);
-        let b2 = MBox::from(0);
-        let b3 = MBox::from(0);
+        let b1 = n!(0);
+        let b2 = n!(0);
+        let b3 = n!(0);
         assert_eq!(b1 + b2, b3);
 
-        let mut b1 = MBox::from(2);
-        let b2 = MBox::from(5);
-        b1.boxes_mut_ref().insert(b2, 1);
-
-        let mut b3 = MBox::from(2);
-        let b4 = MBox::from(5);
-        b3.boxes_mut_ref().insert(b4, 1);
-        assert_eq!(b1, b3);
+        assert_eq!(n!(0), MBox::new());
 
         let mut b1 = MBox::new();
         let b2 = MBox::from(5);
@@ -1030,71 +651,12 @@ mod tests {
     }
 
     #[test]
-    fn test_pixel_product_1() {
-        let a = MBox::pixel(MBox::from(2), MBox::from(2));
-        let b = MBox::pixel(MBox::from(2), MBox::from(1));
-        let c = MBox::pixel_product(&a, &b).unwrap();
-        let expected = MBox::pixel(MBox::from(2), MBox::from(1));
-        println!("{c:#}");
+    fn test_truncate_1() {
+        let a = m_box![2, 3, 4, 4];
+        let b = n![4];
+        let c = a.truncate(&b);
+
+        let expected = m_box![4, 4];
         assert_eq!(c, expected);
-
-        let a = MBox::pixel(MBox::from(1), MBox::from(2));
-        let b = MBox::pixel(MBox::from(3), MBox::from(4));
-        let none = MBox::pixel_product(&a, &b);
-        assert!(none.is_none());
-
-        let a = MBox::pixel(MBox::from(1), MBox::from(2));
-        let b = MBox::pixel(MBox::from(2), MBox::from(1));
-        let c = MBox::pixel_product(&a, &b).unwrap();
-
-        let d = MBox::pixel(MBox::from(1), MBox::from(1));
-        println!("{d}");
-    }
-
-    #[test]
-    fn test_maxel_product_1() {
-        let mut a = MBox::new();
-        let a_11 = MBox::pixel(MBox::from(1), MBox::from(1));
-        let a_12 = MBox::pixel(MBox::from(1), MBox::from(2));
-        let a_22 = MBox::pixel(MBox::from(2), MBox::from(2));
-        a.insert_box(a_11.clone());
-        a.insert_box(a_12.clone());
-        a.insert_box(a_22.clone());
-
-        let mut b = MBox::new();
-        let b_12 = MBox::pixel(MBox::from(1), MBox::from(2));
-        let b_21 = MBox::pixel(MBox::from(2), MBox::from(1));
-        b.insert_box(b_12.clone());
-        b.insert_box(b_21.clone());
-
-        let c = MBox::maxel_product(&a, &b);
-        let mut expected = MBox::new();
-        expected.insert_box(a_11);
-        expected.insert_box(a_12);
-        expected.insert_box(b_21);
-        println!("{c:#}");
-        assert_eq!(c, expected);
-    }
-
-    #[test]
-    fn test_list_1() {
-        let a = MBox::from(1);
-        let b = MBox::from(2);
-        let c = MBox::from(3);
-        let vec = vec![a, b, c];
-
-        let m_box = MBox::from_list(vec);
-
-        assert_eq!(m_box.get_kth(0), Some(MBox::from(1)));
-        assert_eq!(m_box.get_kth(1), Some(MBox::from(2)));
-        assert_eq!(m_box.get_kth(2), Some(MBox::from(3)));
-
-        let a = MBox::from(2);
-        let b = MBox::from(2);
-        let c = MBox::from(3);
-        let vec = vec![a, b, c];
-        let m_box = MBox::from_list(vec);
-
-        // assert_eq!(m_box.get_kth(1), Some(MBox::from(2)));
     }
 }
