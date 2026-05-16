@@ -53,7 +53,10 @@ impl Display for MBox {
                     if *count > 1 {
                         write!(f, "{}", to_subscript(*count))?;
                     }
-                    m_box.fmt(f)?;
+
+                    if *count > 0 {
+                        m_box.fmt(f)?;
+                    }
                 } else {
                     for i in 0..*count {
                         if i > 0 {
@@ -71,8 +74,13 @@ impl Display for MBox {
                     "□".black()
                 };
 
-                if f.alternate() && *count > 1 {
-                    write!(f, "{}{}", to_subscript(*count), symbol)?;
+                if f.alternate() {
+                    if *count > 1 {
+                        write!(f, "{}", to_subscript(*count))?;
+                    }
+                    if *count > 0 {
+                        write!(f, "{}", symbol)?;
+                    }
                 } else {
                     for i in 0..*count {
                         if i > 0 {

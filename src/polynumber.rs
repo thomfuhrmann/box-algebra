@@ -14,8 +14,15 @@ impl MBox {
 }
 
 #[macro_export]
-macro_rules! x {
+macro_rules! var {
     () => {
         $crate::MBox::alpha()
+    };
+}
+
+#[macro_export]
+macro_rules! var_anti {
+    () => {
+        $crate::MBox::alpha_anti()
     };
 }

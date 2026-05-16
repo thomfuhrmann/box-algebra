@@ -23,6 +23,8 @@ mod function;
 mod list;
 #[macro_use]
 mod polynumber;
+mod derivative;
+mod ordered_set;
 mod set;
 
 /// The fundamental data structure for mathematical boxes
@@ -111,7 +113,7 @@ impl MBox {
         MBox::new().into_anti()
     }
 
-    /// Return sthe type of the box: 1 for a box, and -1 for an anti-box
+    /// Returns the type of the box: 1 for a box, and -1 for an anti-box
     pub fn box_type(&self) -> i32 {
         match self {
             MBox::Box(_) => 1,
@@ -122,16 +124,15 @@ impl MBox {
     /// Tests if the box is empty
     pub fn is_empty(&self) -> bool {
         match self {
-            MBox::Box(m) => m.is_empty(),
-            MBox::AntiBox(m) => m.is_empty(),
+            MBox::Box(map) | MBox::AntiBox(map) => map.is_empty(),
         }
     }
 
     /// Inverts the color of a box
     pub fn invert_box(self) -> Self {
         match self {
-            MBox::Box(m) => MBox::AntiBox(m),
-            MBox::AntiBox(m) => MBox::Box(m),
+            MBox::Box(map) => MBox::AntiBox(map),
+            MBox::AntiBox(map) => MBox::Box(map),
         }
     }
 
@@ -192,16 +193,14 @@ impl MBox {
     /// Returns a shared reference to the underlying `BTreeMap`
     pub fn boxes_ref(&self) -> &BTreeMap<MBox, u64> {
         match self {
-            MBox::Box(m) => m,
-            MBox::AntiBox(m) => m,
+            MBox::Box(m) | MBox::AntiBox(m) => m,
         }
     }
 
     /// Returns an exclusive reference to the underlying `BTreeMap`
     pub fn boxes_mut_ref(&mut self) -> &mut BTreeMap<MBox, u64> {
         match self {
-            MBox::Box(m) => m,
-            MBox::AntiBox(m) => m,
+            MBox::Box(m) | MBox::AntiBox(m) => m,
         }
     }
 
@@ -322,24 +321,19 @@ impl MBox {
     }
 
     /// Truncates the box to the box given as an argument
-    pub fn truncate(&self, trunc: &Self) -> Self {
+    pub fn truncate(self, trunc: &Self) -> Self {
+        let is_anti = self.is_anti_box();
         let inner = self
-            .clone()
             .into_boxes()
             .into_iter()
             .filter(|(m_box, _)| m_box == trunc)
             .collect();
 
-        if self.is_anti_box() {
-            MBox::from_boxes_anti(inner)
+        if is_anti {
+            MBox::AntiBox(inner)
         } else {
-            MBox::from_boxes(inner)
+            MBox::Box(inner)
         }
-    }
-
-    /// Tests if this box is an ordered set (a list in which every entry occurs once)
-    pub fn is_ordered_set(&self) -> bool {
-        self.is_list() && self.is_set()
     }
 }
 
@@ -351,27 +345,45 @@ impl FromIterator<MBox> for MBox {
     }
 }
 
-impl From<u32> for MBox {
-    fn from(value: u32) -> Self {
-        let mut m = MBox::new();
-        if value > 0 {
-            m.boxes_mut_ref().insert(MBox::new(), value.into());
-        }
-        m
-    }
+macro_rules! from_uint {
+    ($($t:ty),*) => {
+        $(
+            impl From<$t> for MBox {
+                /// Convert unsigned integer into MBox
+                fn from(n: $t) -> Self {
+                    let mut m = MBox::new();
+                    if n > 0 {
+                        m.boxes_mut_ref().insert(MBox::new(), n as u64);
+                    }
+                    m
+                }
+            }
+        )*
+    };
 }
 
-impl From<i32> for MBox {
-    fn from(value: i32) -> Self {
-        let mut m = MBox::new();
-        if value > 0 {
-            m.boxes_mut_ref().insert(MBox::new(), value as u64);
-        } else if value < 0 {
-            m.boxes_mut_ref().insert(MBox::new_anti(), (-value) as u64);
-        }
-        m
-    }
+from_uint!(u8, u16, u32, u64, u128, usize);
+
+macro_rules! from_int {
+    ($($t:ty),*) => {
+        $(
+            impl From<$t> for MBox {
+                /// Convert signed integer into MBox
+                fn from(n: $t) -> Self {
+                    let mut m = MBox::new();
+                    if n > 0 {
+                        m.boxes_mut_ref().insert(MBox::new(), n as u64);
+                    } else if n < 0 {
+                        m.boxes_mut_ref().insert(MBox::new_anti(), (-n) as u64);
+                    }
+                    m
+                }
+            }
+        )*
+    };
 }
+
+from_int!(i8, i16, i32, i64, i128, isize);
 
 impl std::ops::Add for MBox {
     type Output = MBox;
@@ -467,7 +479,7 @@ macro_rules! m_box {
 }
 
 #[macro_export]
-macro_rules! n {
+macro_rules! num {
     ($e:expr) => {
         $crate::MBox::from($e)
     };
@@ -486,16 +498,16 @@ mod tests {
 
     #[test]
     fn test_add_1() {
-        let three = n!(3);
-        let five = n!(5);
-        let eight = n!(8);
+        let three = num!(3);
+        let five = num!(5);
+        let eight = num!(8);
         assert_eq!(three + five, eight);
 
-        let four = n!(4);
-        let alpha_5 = x!().pow(5);
+        let four = num!(4);
+        let alpha_5 = var!().pow(5);
         let mut b0 = MBox::new();
         let b1 = MBox::new();
-        let b2 = n!(5);
+        let b2 = num!(5);
         b0.boxes_mut_ref().insert(b1, 4);
         b0.boxes_mut_ref().insert(b2, 1);
         assert_eq!(four + alpha_5, b0);
@@ -505,12 +517,12 @@ mod tests {
         let b3 = MBox::new();
         assert_eq!(b1 + b2, b3);
 
-        let b1 = n!(0);
-        let b2 = n!(0);
-        let b3 = n!(0);
+        let b1 = num!(0);
+        let b2 = num!(0);
+        let b3 = num!(0);
         assert_eq!(b1 + b2, b3);
 
-        assert_eq!(n!(0), MBox::new());
+        assert_eq!(num!(0), MBox::new());
 
         let mut b1 = MBox::new();
         let b2 = MBox::from(5);
@@ -653,7 +665,7 @@ mod tests {
     #[test]
     fn test_truncate_1() {
         let a = m_box![2, 3, 4, 4];
-        let b = n![4];
+        let b = num![4];
         let c = a.truncate(&b);
 
         let expected = m_box![4, 4];
