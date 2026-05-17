@@ -15,33 +15,33 @@ impl MBox {
 
     /// Tests if the box is a pixel
     pub fn is_pixel(&self) -> bool {
-        self.boxes_ref().len() == 2 && self.is_list()
+        self.as_boxes().len() == 2 && self.is_list()
     }
 
     /// Tests if the box contains only one element
     pub fn is_singleton(&self) -> bool {
-        self.boxes_ref().len() == 1
+        self.as_boxes().len() == 1
     }
 
     /// Tests if the box is a vexel which is defined as a box of singletons
     pub fn is_vexel(&self) -> bool {
-        self.boxes_ref().iter().all(|(b, _)| b.is_singleton())
+        self.as_boxes().iter().all(|(b, _)| b.is_singleton())
     }
 
     /// Tests if the box is a maxel which is defined as a box of pixels
     pub fn is_maxel(&self) -> bool {
-        self.boxes_ref().iter().all(|(b, _)| b.is_pixel())
+        self.as_boxes().iter().all(|(b, _)| b.is_pixel())
     }
 
     /// Converts to a pair of boxes
     pub fn as_pixel_pair(&self) -> Option<(&MBox, &MBox)> {
-        let mut iter = self.boxes_ref().keys();
+        let mut iter = self.as_boxes().keys();
         let first = iter.next()?;
-        let first_box = first.boxes_ref().keys().next()?;
+        let first_box = first.as_boxes().keys().next()?;
 
         let second = iter.next()?;
         let second_box = second
-            .boxes_ref()
+            .as_boxes()
             .iter()
             .find(|&(m_box, &mul)| if m_box == first_box { mul > 1 } else { true })?
             .0;
@@ -68,10 +68,10 @@ impl MBox {
         }
 
         let mut result = Self::new();
-        for (a_pix, a_mul) in a_box.boxes_ref() {
-            for (b_pix, b_mul) in b_box.boxes_ref() {
+        for (a_pix, a_mul) in a_box.as_boxes() {
+            for (b_pix, b_mul) in b_box.as_boxes() {
                 if let Some(pix) = Self::pixel_product(a_pix, b_pix) {
-                    *result.boxes_mut_ref().entry(pix).or_insert(0) += a_mul * b_mul;
+                    *result.as_boxes_mut().entry(pix).or_insert(0) += a_mul * b_mul;
                 }
             }
         }

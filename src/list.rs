@@ -22,7 +22,7 @@ impl MBox {
             return None;
         }
         let mut sequences: Vec<MBox> = self.into_boxes().into_keys().collect();
-        sequences.sort_by_key(|m| m.boxes_ref().len());
+        sequences.sort_by_key(|m| m.as_boxes().len());
 
         let mut result = Vec::new();
         let mut previous_map: BTreeMap<MBox, u64> = BTreeMap::new();
@@ -49,7 +49,7 @@ impl MBox {
 
     /// Test if this box is a list
     pub fn is_list(&self) -> bool {
-        let sequences: Vec<&MBox> = self.boxes_ref().keys().collect();
+        let sequences: Vec<&MBox> = self.as_boxes().keys().collect();
 
         if sequences.is_empty() {
             return true;
@@ -59,8 +59,8 @@ impl MBox {
             let current = sequences[i];
             let next = sequences[i + 1];
 
-            for (curr_box, curr_mul) in current.boxes_ref() {
-                if let Some(next_mul) = next.boxes_ref().get(curr_box) {
+            for (curr_box, curr_mul) in current.as_boxes() {
+                if let Some(next_mul) = next.as_boxes().get(curr_box) {
                     if next_mul != curr_mul && *next_mul != *curr_mul + 1 {
                         return false;
                     }
@@ -75,13 +75,13 @@ impl MBox {
 
     /// Tests if the box is a box of lists
     pub fn is_list_box(&self) -> bool {
-        self.boxes_ref().iter().all(|(m_box, _)| m_box.is_list())
+        self.as_boxes().iter().all(|(m_box, _)| m_box.is_list())
     }
 
     /// Returns the first item that is in self but not in other
     fn diff_one(&self, other: &Self) -> Option<Self> {
-        for (item, count) in self.boxes_ref() {
-            if let Some((_, other_count)) = other.boxes_ref().get_key_value(item) {
+        for (item, count) in self.as_boxes() {
+            if let Some((_, other_count)) = other.as_boxes().get_key_value(item) {
                 if count > other_count {
                     return Some(item.clone());
                 }
@@ -99,14 +99,14 @@ impl MBox {
         }
 
         let mut sequences: Vec<MBox> = self.clone().into_boxes().into_keys().collect();
-        sequences.sort_by_key(|m| m.boxes_ref().len());
+        sequences.sort_by_key(|m| m.as_boxes().len());
 
         if k >= sequences.len() {
             return None;
         }
 
         if k == 0
-            && let Some((m_box, _)) = sequences[0].boxes_ref().first_key_value()
+            && let Some((m_box, _)) = sequences[0].as_boxes().first_key_value()
         {
             return Some(m_box.clone());
         }
@@ -127,7 +127,7 @@ impl MBox {
             }
         }
 
-        self.boxes_ref()
+        self.as_boxes()
             .iter()
             .filter_map(|(m_box, _)| m_box.get_kth(k))
             .collect()

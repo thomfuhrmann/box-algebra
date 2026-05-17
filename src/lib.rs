@@ -13,87 +13,26 @@
 //!
 //! - <https://www.youtube.com/playlist?list=PLIljB45xT85B0aMG-G9oqj-NPIuBMnq8z>
 
-use std::{cmp::Ordering, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 #[macro_use]
-mod maxel;
+pub mod maxel;
 mod display;
-mod function;
+pub mod function;
 #[macro_use]
 mod list;
 #[macro_use]
-mod polynumber;
-mod derivative;
-mod ordered_set;
-mod set;
+pub mod polynumber;
+pub mod derivative;
+mod ord;
+pub mod ordered_set;
+pub mod set;
 
 /// The fundamental data structure for mathematical boxes
 #[derive(Debug, Clone)]
 pub enum MBox {
     Box(BTreeMap<MBox, u64>),
     AntiBox(BTreeMap<MBox, u64>),
-}
-
-impl PartialEq for MBox {
-    fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == Ordering::Equal
-    }
-}
-
-impl Eq for MBox {}
-
-impl PartialOrd for MBox {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-/// Ordering is from anti-box to box and from lower nesting to higher nesting of boxes
-impl Ord for MBox {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // variant ordering first
-        match (self, other) {
-            (MBox::AntiBox(_), MBox::Box(_)) => return Ordering::Less,
-            (MBox::Box(_), MBox::AntiBox(_)) => return Ordering::Greater,
-            _ => {}
-        }
-
-        let l = self.boxes_ref();
-        let r = other.boxes_ref();
-
-        // structural equality check
-        if l == r {
-            return Ordering::Equal;
-        }
-
-        // depth comparison
-        let l_depth = self.depth();
-        let r_depth = other.depth();
-        if l_depth != r_depth {
-            return l_depth.cmp(&r_depth);
-        }
-
-        // net weight comparison
-        let get_weight = |map: &BTreeMap<MBox, u64>| -> i128 {
-            map.iter().fold(0i128, |acc, (m, &count)| {
-                if m.is_anti_box() {
-                    acc - count as i128
-                } else {
-                    acc + count as i128
-                }
-            })
-        };
-
-        let left_w = get_weight(l);
-        let right_w = get_weight(r);
-
-        if left_w != right_w {
-            return left_w.cmp(&right_w);
-        }
-
-        // final tie-breaker: lexicographical comparison
-        l.cmp(r)
-    }
 }
 
 impl Default for MBox {
@@ -103,18 +42,51 @@ impl Default for MBox {
 }
 
 impl MBox {
+    pub const ZERO: Self = MBox::Box(BTreeMap::new());
+    pub const ANTI_ZERO: Self = MBox::AntiBox(BTreeMap::new());
+
     /// Creates a new empty box
-    pub fn new() -> Self {
-        Default::default()
+    pub const fn new() -> Self {
+        MBox::Box(BTreeMap::new())
     }
 
     /// Creates a new empty anti-box
-    pub fn new_anti() -> Self {
-        MBox::new().into_anti()
+    pub const fn new_anti() -> Self {
+        MBox::AntiBox(BTreeMap::new())
+    }
+
+    /// Constructs the box that is one
+    /// A box that just contains an empty box
+    pub fn one() -> Self {
+        let mut map = BTreeMap::new();
+        map.insert(Self::ZERO, 1);
+        MBox::Box(map)
+    }
+
+    /// Constructs the box that is anti-one
+    /// An anti-box that just contains an empty box
+    pub fn one_anti() -> Self {
+        let mut map = BTreeMap::new();
+        map.insert(Self::ZERO, 1);
+        MBox::AntiBox(map)
+    }
+
+    /// Constructs the box that is negative one
+    pub fn neg_one() -> Self {
+        let mut map = BTreeMap::new();
+        map.insert(Self::ANTI_ZERO, 1);
+        MBox::Box(map)
+    }
+
+    /// Constructs the box that is anti negative one
+    pub fn neg_one_anti() -> Self {
+        let mut map = BTreeMap::new();
+        map.insert(Self::ANTI_ZERO, 1);
+        MBox::AntiBox(map)
     }
 
     /// Returns the type of the box: 1 for a box, and -1 for an anti-box
-    pub fn box_type(&self) -> i32 {
+    pub const fn box_type(&self) -> i8 {
         match self {
             MBox::Box(_) => 1,
             MBox::AntiBox(_) => -1,
@@ -136,69 +108,60 @@ impl MBox {
         }
     }
 
-    /// Converts a box into a box
-    pub fn into_box(self) -> Self {
+    /// Converts a box into a (non-anti) box
+    /// It is the identity for (non-anti) boxes
+    pub fn to_box(self) -> Self {
         match self {
-            MBox::AntiBox(m) => MBox::Box(m),
+            MBox::AntiBox(map) => MBox::Box(map),
             m_box => m_box,
         }
     }
 
     /// Converts a box into an anti-box
-    pub fn into_anti(self) -> Self {
+    /// It is the identity for anit-boxes
+    pub fn to_anti_box(self) -> Self {
         match self {
-            MBox::Box(m) => MBox::AntiBox(m),
+            MBox::Box(map) => MBox::AntiBox(map),
             anti => anti,
         }
     }
 
-    /// Tests if the box is a box
-    pub fn is_box(&self) -> bool {
+    /// Tests if the box is a (non-anti) box
+    pub const fn is_box(&self) -> bool {
         self.box_type() == 1
     }
 
     /// Tests if the box is an anti-box
-    pub fn is_anti_box(&self) -> bool {
+    pub const fn is_anti_box(&self) -> bool {
         self.box_type() == -1
     }
 
     /// Tests if the box is empty
     pub fn is_zero(&self) -> bool {
-        self.is_box() && self.is_empty()
+        *self == Self::ZERO
     }
 
     /// Tests if the anti-box is empty
     pub fn is_anti_zero(&self) -> bool {
-        self.is_anti_box() && self.is_empty()
-    }
-
-    /// Wraps the boxes into a box container
-    pub fn from_boxes(inner: BTreeMap<MBox, u64>) -> Self {
-        MBox::Box(inner)
-    }
-
-    /// Wraps the boxes into an anti-box container
-    pub fn from_boxes_anti(inner: BTreeMap<MBox, u64>) -> Self {
-        MBox::AntiBox(inner)
+        *self == Self::ANTI_ZERO
     }
 
     /// Consumes the box returning its contained boxes
     pub fn into_boxes(self) -> BTreeMap<MBox, u64> {
         match self {
-            MBox::Box(m) => m,
-            MBox::AntiBox(m) => m,
+            MBox::Box(m) | MBox::AntiBox(m) => m,
         }
     }
 
     /// Returns a shared reference to the underlying `BTreeMap`
-    pub fn boxes_ref(&self) -> &BTreeMap<MBox, u64> {
+    pub fn as_boxes(&self) -> &BTreeMap<MBox, u64> {
         match self {
             MBox::Box(m) | MBox::AntiBox(m) => m,
         }
     }
 
     /// Returns an exclusive reference to the underlying `BTreeMap`
-    pub fn boxes_mut_ref(&mut self) -> &mut BTreeMap<MBox, u64> {
+    pub fn as_boxes_mut(&mut self) -> &mut BTreeMap<MBox, u64> {
         match self {
             MBox::Box(m) | MBox::AntiBox(m) => m,
         }
@@ -206,20 +169,20 @@ impl MBox {
 
     /// Inserts a box into this box
     pub fn insert_box(&mut self, elem: MBox) {
-        self.boxes_mut_ref()
+        self.as_boxes_mut()
             .entry(elem)
             .and_modify(|count| *count += 1)
             .or_insert(1);
     }
 
-    /// Wraps the box into a new box
+    /// Wraps the box into another new box
     pub fn wrap(self) -> Self {
         let mut b = MBox::new();
         b.insert_box(self);
         b
     }
 
-    /// Wraps the box into a new anti-box
+    /// Wraps the box into another new anti-box
     pub fn wrap_anti(self) -> Self {
         let mut b = MBox::new_anti();
         b.insert_box(self);
@@ -228,7 +191,7 @@ impl MBox {
 
     /// Calculates the maximum depth of this box
     pub fn depth(&self) -> usize {
-        self.boxes_ref()
+        self.as_boxes()
             .keys()
             .map(|m_box| m_box.depth())
             .max()
@@ -238,7 +201,7 @@ impl MBox {
 
     /// Calculates the size of this box (number of elements including multiplicities)
     pub fn size(&self) -> u64 {
-        self.boxes_ref().iter().fold(0, |acc, (_, mul)| acc + mul)
+        self.as_boxes().iter().fold(0, |acc, (_, mul)| acc + mul)
     }
 
     /// Tests if this box is a number
@@ -288,7 +251,7 @@ impl MBox {
             // normalize
             let multiplier = if child.is_anti_box() { -1 } else { 1 };
             let normalized_child = if child.is_anti_box() {
-                child.into_box()
+                child.to_box()
             } else {
                 child
             };
@@ -305,7 +268,7 @@ impl MBox {
 
             // if net is negative, the child becomes an anti-box with a positive count
             let (final_child, final_count) = if net < 0 {
-                (child.into_anti(), net.unsigned_abs() as u64)
+                (child.to_anti_box(), net.unsigned_abs() as u64)
             } else {
                 (child, net as u64)
             };
@@ -351,11 +314,11 @@ macro_rules! from_uint {
             impl From<$t> for MBox {
                 /// Convert unsigned integer into MBox
                 fn from(n: $t) -> Self {
-                    let mut m = MBox::new();
+                    let mut outer = MBox::new();
                     if n > 0 {
-                        m.boxes_mut_ref().insert(MBox::new(), n as u64);
+                        outer.as_boxes_mut().insert(MBox::ZERO, n as u64);
                     }
-                    m
+                    outer
                 }
             }
         )*
@@ -370,13 +333,13 @@ macro_rules! from_int {
             impl From<$t> for MBox {
                 /// Convert signed integer into MBox
                 fn from(n: $t) -> Self {
-                    let mut m = MBox::new();
+                    let mut outer = MBox::new();
                     if n > 0 {
-                        m.boxes_mut_ref().insert(MBox::new(), n as u64);
+                        outer.as_boxes_mut().insert(MBox::ZERO, n as u64);
                     } else if n < 0 {
-                        m.boxes_mut_ref().insert(MBox::new_anti(), (-n) as u64);
+                        outer.as_boxes_mut().insert(MBox::ANTI_ZERO, (-n) as u64);
                     }
-                    m
+                    outer
                 }
             }
         )*
@@ -390,13 +353,13 @@ impl std::ops::Add for MBox {
     fn add(mut self, other: Self) -> Self {
         let result_type = self.box_type() * other.box_type();
         for (m, count) in other.into_boxes() {
-            *self.boxes_mut_ref().entry(m).or_default() += count;
+            *self.as_boxes_mut().entry(m).or_default() += count;
         }
 
         if result_type < 0 {
-            self.into_anti()
+            self.to_anti_box()
         } else {
-            self.into_box()
+            self.to_box()
         }
     }
 }
@@ -433,9 +396,9 @@ impl std::ops::Mul for MBox {
         };
 
         for (b1, v1) in self.into_boxes() {
-            for (b2, v2) in other.boxes_ref() {
+            for (b2, v2) in other.as_boxes() {
                 result
-                    .boxes_mut_ref()
+                    .as_boxes_mut()
                     .insert(b1.clone() + b2.clone(), v1 * v2);
             }
         }
@@ -504,12 +467,12 @@ mod tests {
         assert_eq!(three + five, eight);
 
         let four = num!(4);
-        let alpha_5 = var!().pow(5);
+        let alpha_5 = var!(0).pow(5);
         let mut b0 = MBox::new();
         let b1 = MBox::new();
         let b2 = num!(5);
-        b0.boxes_mut_ref().insert(b1, 4);
-        b0.boxes_mut_ref().insert(b2, 1);
+        b0.as_boxes_mut().insert(b1, 4);
+        b0.as_boxes_mut().insert(b2, 1);
         assert_eq!(four + alpha_5, b0);
 
         let b1 = MBox::new();
@@ -528,15 +491,15 @@ mod tests {
         let b2 = MBox::from(5);
         let b3 = MBox::from(3);
 
-        b1.boxes_mut_ref().insert(b2, 1);
-        b1.boxes_mut_ref().insert(b3, 1);
+        b1.as_boxes_mut().insert(b2, 1);
+        b1.as_boxes_mut().insert(b3, 1);
 
         let mut b4 = MBox::new();
         let b5 = MBox::from(5);
         let b6 = MBox::from(3);
 
-        b4.boxes_mut_ref().insert(b6, 1);
-        b4.boxes_mut_ref().insert(b5, 1);
+        b4.as_boxes_mut().insert(b6, 1);
+        b4.as_boxes_mut().insert(b5, 1);
 
         assert_eq!(b1, b4);
     }
@@ -546,15 +509,15 @@ mod tests {
         let mut b1 = MBox::new();
         let b2 = MBox::from(2);
 
-        b1.boxes_mut_ref().insert(b2, 2);
-        b1.boxes_mut_ref().insert(MBox::new_anti(), 1);
-        b1.boxes_mut_ref().insert(MBox::new(), 3);
+        b1.as_boxes_mut().insert(b2, 2);
+        b1.as_boxes_mut().insert(MBox::new_anti(), 1);
+        b1.as_boxes_mut().insert(MBox::new(), 3);
 
         let mut b3 = MBox::new();
         let b4 = MBox::from(3);
 
-        b3.boxes_mut_ref().insert(b4, 2);
-        b3.boxes_mut_ref().insert(MBox::new(), 2);
+        b3.as_boxes_mut().insert(b4, 2);
+        b3.as_boxes_mut().insert(MBox::new(), 2);
 
         assert!(b3 > b1);
 
@@ -574,11 +537,11 @@ mod tests {
 
         let one = MBox::from(1);
         let two = MBox::from(2);
-        let alpha = MBox::alpha();
+        let alpha = var!(0);
 
         let mut b = MBox::new();
-        b.boxes_mut_ref().insert(MBox::new(), 1);
-        b.boxes_mut_ref().insert(one.clone(), 2);
+        b.as_boxes_mut().insert(MBox::new(), 1);
+        b.as_boxes_mut().insert(one.clone(), 2);
 
         let p = one + two * alpha;
 
@@ -587,19 +550,19 @@ mod tests {
         let b1 = MBox::new();
         let b2 = MBox::from(3);
         let mut b3 = MBox::new();
-        b3.boxes_mut_ref().insert(b1.clone(), 3);
-        b3.boxes_mut_ref().insert(b2.clone(), 1);
+        b3.as_boxes_mut().insert(b1.clone(), 3);
+        b3.as_boxes_mut().insert(b2.clone(), 1);
 
         let b4 = MBox::new();
         let b5 = MBox::from(2);
         let mut b6 = MBox::new();
-        b6.boxes_mut_ref().insert(b4.clone(), 2);
-        b6.boxes_mut_ref().insert(b5.clone(), 1);
+        b6.as_boxes_mut().insert(b4.clone(), 2);
+        b6.as_boxes_mut().insert(b5.clone(), 1);
 
         let two = MBox::from(2);
         let three = MBox::from(3);
         let six = MBox::from(6);
-        let alpha = MBox::alpha();
+        let alpha = var!(0);
         let alpha_2 = alpha.clone().pow(2);
         let alpha_3 = alpha.clone().pow(3);
         let alpha_5 = alpha.clone().pow(5);
@@ -607,13 +570,13 @@ mod tests {
 
         assert_eq!(b3 * b6, p);
 
-        let anti_one = MBox::from(1).into_anti();
-        let two = MBox::from(2);
-        let alpha = MBox::alpha();
+        let anti_one = MBox::one_anti();
+        let two = num!(2);
+        let alpha = var!(0);
 
         let mut b = MBox::new_anti();
-        b.boxes_mut_ref().insert(MBox::new(), 1);
-        b.boxes_mut_ref().insert(MBox::from(1), 2);
+        b.as_boxes_mut().insert(MBox::new(), 1);
+        b.as_boxes_mut().insert(MBox::from(1), 2);
 
         let p = anti_one + two * alpha;
 
@@ -623,41 +586,41 @@ mod tests {
     #[test]
     fn test_annihilate_1() {
         let mut b = MBox::new();
-        b.boxes_mut_ref().insert(MBox::new_anti(), 1);
-        b.boxes_mut_ref().insert(MBox::new(), 1);
+        b.as_boxes_mut().insert(MBox::new_anti(), 1);
+        b.as_boxes_mut().insert(MBox::new(), 1);
 
         assert_eq!(b.annihilate(), MBox::new());
 
         let mut b = MBox::new();
-        b.boxes_mut_ref().insert(MBox::new_anti(), 1);
-        b.boxes_mut_ref().insert(MBox::new(), 1);
+        b.as_boxes_mut().insert(MBox::new_anti(), 1);
+        b.as_boxes_mut().insert(MBox::new(), 1);
         let mut c = MBox::new();
-        c.boxes_mut_ref().insert(b.clone(), 1);
+        c.as_boxes_mut().insert(b.clone(), 1);
 
         let d = MBox::from(1);
 
         assert_eq!(c.annihilate(), d);
 
         let mut e = MBox::new_anti();
-        e.boxes_mut_ref().insert(MBox::new_anti(), 1);
-        e.boxes_mut_ref().insert(MBox::new(), 1);
+        e.as_boxes_mut().insert(MBox::new_anti(), 1);
+        e.as_boxes_mut().insert(MBox::new(), 1);
         let mut f = MBox::new();
-        f.boxes_mut_ref().insert(b.clone(), 1);
-        f.boxes_mut_ref().insert(e.clone(), 1);
+        f.as_boxes_mut().insert(b.clone(), 1);
+        f.as_boxes_mut().insert(e.clone(), 1);
 
         assert_eq!(f.annihilate(), MBox::new());
 
         let mut a = MBox::new();
-        a.boxes_mut_ref().insert(MBox::new(), 1);
-        a.boxes_mut_ref().insert(MBox::new_anti(), 1);
+        a.as_boxes_mut().insert(MBox::new(), 1);
+        a.as_boxes_mut().insert(MBox::new_anti(), 1);
 
         let mut b = MBox::new_anti();
-        b.boxes_mut_ref().insert(MBox::new(), 1);
-        b.boxes_mut_ref().insert(MBox::new_anti(), 1);
+        b.as_boxes_mut().insert(MBox::new(), 1);
+        b.as_boxes_mut().insert(MBox::new_anti(), 1);
 
         let mut c = MBox::new();
-        c.boxes_mut_ref().insert(a, 1);
-        c.boxes_mut_ref().insert(b, 1);
+        c.as_boxes_mut().insert(a, 1);
+        c.as_boxes_mut().insert(b, 1);
 
         assert_eq!(c.annihilate(), MBox::new());
     }

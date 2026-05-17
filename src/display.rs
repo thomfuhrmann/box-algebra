@@ -40,7 +40,7 @@ impl Display for MBox {
 
         write!(f, "{}", open)?;
 
-        let map = self.boxes_ref();
+        let map = self.as_boxes();
         let mut first = true;
         for (m_box, count) in map.iter() {
             if !first {
@@ -98,7 +98,7 @@ impl Display for MBox {
 
 #[cfg(test)]
 mod tests {
-    use crate::MBox;
+    use crate::{MBox, num, var};
 
     #[test]
     fn test_display() {
@@ -114,17 +114,17 @@ mod tests {
         let ann = sum.annihilate();
         println!("{ann}");
 
-        let alpha = MBox::alpha();
+        let alpha = var!(0);
         println!("{alpha}");
 
-        let poly = &anti_two + &alpha + &alpha + &alpha * &alpha + MBox::from(1);
+        let poly = &anti_two + &alpha + &alpha + &alpha * &alpha + num!(1);
         println!("{poly}");
         println!("{poly:#}");
 
         let poly_ann = poly.annihilate();
         println!("{poly_ann:#}");
 
-        let anti_box = MBox::from(4).into_anti();
+        let anti_box = MBox::from(4).to_anti_box();
         println!("{anti_box:#}");
     }
 }

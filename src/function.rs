@@ -30,23 +30,23 @@ mod tests {
     fn test_fn_1() {
         let f_box = maxel![
             [0, 3],
-            [var!(), 1],
+            [var!(0), 1],
             [3, 1],
-            [2, num!(6) + var!() * var!()],
+            [2, num!(6) + var!(0) * var!(0)],
             [4, 5]
         ];
         assert!(f_box.is_function());
 
-        let dom = m_box![0, var!(), 3, 2, 4];
+        let dom = m_box![0, var!(0), 3, 2, 4];
         assert_eq!(f_box.domain(), dom);
 
-        let range = m_box![3, 1, num!(6) + var!() * var!(), 5];
+        let range = m_box![3, 1, num!(6) + var!(0) * var!(0), 5];
         assert_eq!(f_box.range(), range);
 
         let g_box = maxel![[0, 0], [3, 8], [1, 8]];
         let prod = MBox::maxel_product(&f_box, &g_box);
 
-        let expected = maxel![[0, 8], [var!(), 8], [3, 8]];
+        let expected = maxel![[0, 8], [var!(0), 8], [3, 8]];
         assert_eq!(prod, Some(expected));
     }
 }
