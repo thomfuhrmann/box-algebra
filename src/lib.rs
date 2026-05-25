@@ -229,7 +229,7 @@ impl MBox {
         if current_depth + 1 == target_depth {
             let ann = self.clone().annihilate();
             let map = ann.into_boxes();
-            return map.into_iter().map(|(_, value)| value).collect();
+            return map.into_values().collect();
         }
 
         let map = self.as_boxes();

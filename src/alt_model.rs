@@ -152,20 +152,20 @@ impl BoxArena {
     pub const ZERO: BoxId = BoxId(0);
     pub const ANTI_ZERO: BoxId = BoxId(1);
     pub const ONE: BoxId = BoxId(2);
-    pub const ANTI_ONE: BoxId = BoxId(3);
+    pub const ANTI_ONE: BoxId = BoxId(4);
 
     /// Initializes the arena with elementary objects
     pub fn new() -> Self {
         let random_state = RandomState::new();
         let mut cache = RapidHashMap::new();
 
-        let mut colors = Vec::with_capacity(4);
-        let mut arities = Vec::with_capacity(4);
-        let mut multiplicities = Vec::with_capacity(4);
-        let mut lengths = Vec::with_capacity(4);
-        let mut expression_roots = Vec::with_capacity(4);
+        let mut colors = Vec::with_capacity(8);
+        let mut arities = Vec::with_capacity(8);
+        let mut multiplicities = Vec::with_capacity(8);
+        let mut lengths = Vec::with_capacity(8);
+        let mut expression_roots = Vec::with_capacity(8);
 
-        let mut register_primitive = |id: BoxId, raw_box: RawBox| {
+        let mut register_box = |id: BoxId, raw_box: RawBox| {
             // Compute structural hash
             let hash = raw_box.hash(&random_state);
 
@@ -178,16 +178,16 @@ impl BoxArena {
             expression_roots.push(id);
         };
 
-        register_primitive(Self::ZERO, RawBox::new(&[Color::Black], &[0], &[1], &[1]));
-        register_primitive(
+        register_box(Self::ZERO, RawBox::new(&[Color::Black], &[0], &[1], &[1]));
+        register_box(
             Self::ANTI_ZERO,
             RawBox::new(&[Color::Red], &[0], &[1], &[1]),
         );
-        register_primitive(
+        register_box(
             Self::ONE,
             RawBox::new(&[Color::Black, Color::Black], &[1, 0], &[1, 1], &[2, 1]),
         );
-        register_primitive(
+        register_box(
             Self::ANTI_ONE,
             RawBox::new(&[Color::Red, Color::Black], &[1, 0], &[1, 1], &[2, 1]),
         );
@@ -232,14 +232,14 @@ impl BoxArena {
         }
 
         // cache miss
+        let new_id = self.next_id();
+        self.cache.insert(hash, new_id);
+        self.expression_roots.push(new_id);
+
         self.colors.extend_from_slice(raw.colors);
         self.arities.extend_from_slice(raw.arities);
         self.multiplicities.extend_from_slice(raw.multiplicities);
         self.lengths.extend_from_slice(raw.lengths);
-
-        let new_id = self.next_id();
-        self.cache.insert(hash, new_id);
-        self.expression_roots.push(new_id);
 
         new_id
     }
@@ -329,11 +329,14 @@ impl BoxArena {
                     let match_slice: BoxSlice = slices[existing_plan_idx];
                     if slice.is_equal_to(&match_slice, arena) {
                         let current_col = self.colors[curr];
-                        if current_col == Color::Red {
-                            current_mult *= -1;
+                        if let Some((_, mul)) = unique_children.get_mut(&struct_hash) {
+                            if current_col == Color::Red {
+                                *mul = mul.saturating_sub(current_mult);
+                            } else {
+                                *mul = mul.saturating_add(current_mult);
+                            }
+                            found_match = true;
                         }
-                        unique_children.get_mut(&struct_hash).unwrap().1 += current_mult;
-                        found_match = true;
                     }
                 }
 
