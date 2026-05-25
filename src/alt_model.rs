@@ -1,37 +1,4 @@
-// use malachite::Integer;
-//
-// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-// pub enum Count {
-//     /// Keeps the common case (counts < 2^63) entirely stack-allocated and ultra-fast.
-//     Small(u64),
-//     /// Gracefully scales to infinite precision when numbers explode.
-//     Large(Integer),
-// }
-//
-// impl std::ops::AddAssign<u64> for Count {
-//     fn add_assign(&mut self, rhs: u64) {
-//         match self {
-//             Count::Small(lhs) => {
-//                 if let Some(sum) = lhs.checked_add(rhs) {
-//                     *lhs = sum;
-//                 } else {
-//                     // Overflow triggered! Upgrade to Malachite Big Integer
-//                     let mut big_lhs = Integer::from(*lhs);
-//                     big_lhs += Integer::from(rhs);
-//                     *self = Count::Large(big_lhs);
-//                 }
-//             }
-//             Count::Large(big_lhs) => {
-//                 *big_lhs += Integer::from(rhs);
-//             }
-//         }
-//     }
-// }
-
-// #[derive(Debug)]
-// pub enum Count {
-//     Small(u64)
-// }
+use malachite::Integer;
 
 use std::{
     hash::{BuildHasher, Hash, Hasher},
@@ -42,9 +9,18 @@ use rapidhash::{HashMapExt, RapidHashMap, fast::RandomState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct BoxId(pub u32);
+pub struct BoxId(u32);
 
 impl BoxId {
+    #[inline(always)]
+    pub fn new(id: u32) -> Self {
+        Self(id)
+    }
+
+    pub fn id(self) -> u32 {
+        self.0
+    }
+
     #[inline(always)]
     pub fn index(self) -> usize {
         self.0 as usize
@@ -63,7 +39,7 @@ impl From<usize> for BoxId {
 pub struct RawBox<'a> {
     pub colors: &'a [Color],
     pub arities: &'a [u32],
-    pub multiplicities: &'a [u64],
+    pub multiplicities: &'a [Integer],
     pub lengths: &'a [u32],
 }
 
@@ -71,7 +47,7 @@ impl<'a> RawBox<'a> {
     pub fn new(
         colors: &'a [Color],
         arities: &'a [u32],
-        multiplicities: &'a [u64],
+        multiplicities: &'a [Integer],
         lengths: &'a [u32],
     ) -> Self {
         Self {
@@ -124,15 +100,16 @@ impl Mul<Color> for Color {
     }
 }
 
+/// Global arena for computations
 #[derive(Debug)]
 pub struct BoxArena {
     /// Box colors
     pub colors: Vec<Color>,
-    /// Number of child nodes
+    /// Numbers of child boxes
     pub arities: Vec<u32>,
-    /// Multiplicity of the node itself
-    pub multiplicities: Vec<u64>,
-    /// Number of flat nodes occupied by this subtree
+    /// Multiplicities of boxes
+    pub multiplicities: Vec<Integer>,
+    /// Numbers of rows occupied for a box
     pub lengths: Vec<u32>,
     /// Pointers to the starting indices of active boxes
     pub expression_roots: Vec<BoxId>,
@@ -148,48 +125,83 @@ impl Default for BoxArena {
     }
 }
 
+const ARENA_INIT_CAPACITY: usize = 16;
 impl BoxArena {
     pub const ZERO: BoxId = BoxId(0);
     pub const ANTI_ZERO: BoxId = BoxId(1);
     pub const ONE: BoxId = BoxId(2);
     pub const ANTI_ONE: BoxId = BoxId(4);
+    pub const NEG_ONE: BoxId = BoxId(6);
+    pub const ANTI_NEG_ONE: BoxId = BoxId(8);
 
     /// Initializes the arena with elementary objects
     pub fn new() -> Self {
         let random_state = RandomState::new();
         let mut cache = RapidHashMap::new();
 
-        let mut colors = Vec::with_capacity(8);
-        let mut arities = Vec::with_capacity(8);
-        let mut multiplicities = Vec::with_capacity(8);
-        let mut lengths = Vec::with_capacity(8);
-        let mut expression_roots = Vec::with_capacity(8);
+        let mut colors = Vec::with_capacity(ARENA_INIT_CAPACITY);
+        let mut arities = Vec::with_capacity(ARENA_INIT_CAPACITY);
+        let mut multiplicities = Vec::with_capacity(ARENA_INIT_CAPACITY);
+        let mut lengths = Vec::with_capacity(ARENA_INIT_CAPACITY);
+        let mut expression_roots = Vec::with_capacity(ARENA_INIT_CAPACITY);
 
         let mut register_box = |id: BoxId, raw_box: RawBox| {
             // Compute structural hash
             let hash = raw_box.hash(&random_state);
 
-            // Commit to vectors
+            // Commit data
             cache.insert(hash, id);
+            expression_roots.push(id);
+
             colors.extend_from_slice(raw_box.colors);
             arities.extend_from_slice(raw_box.arities);
             multiplicities.extend_from_slice(raw_box.multiplicities);
             lengths.extend_from_slice(raw_box.lengths);
-            expression_roots.push(id);
         };
 
-        register_box(Self::ZERO, RawBox::new(&[Color::Black], &[0], &[1], &[1]));
+        register_box(
+            Self::ZERO,
+            RawBox::new(&[Color::Black], &[0], &[Integer::from(1)], &[1]),
+        );
         register_box(
             Self::ANTI_ZERO,
-            RawBox::new(&[Color::Red], &[0], &[1], &[1]),
+            RawBox::new(&[Color::Red], &[0], &[Integer::from(1)], &[1]),
         );
         register_box(
             Self::ONE,
-            RawBox::new(&[Color::Black, Color::Black], &[1, 0], &[1, 1], &[2, 1]),
+            RawBox::new(
+                &[Color::Black, Color::Black],
+                &[1, 0],
+                &[Integer::from(1), Integer::from(1)],
+                &[2, 1],
+            ),
         );
         register_box(
             Self::ANTI_ONE,
-            RawBox::new(&[Color::Red, Color::Black], &[1, 0], &[1, 1], &[2, 1]),
+            RawBox::new(
+                &[Color::Red, Color::Black],
+                &[1, 0],
+                &[Integer::from(1), Integer::from(1)],
+                &[2, 1],
+            ),
+        );
+        register_box(
+            Self::NEG_ONE,
+            RawBox::new(
+                &[Color::Black, Color::Red],
+                &[1, 0],
+                &[Integer::from(1), Integer::from(1)],
+                &[2, 1],
+            ),
+        );
+        register_box(
+            Self::ANTI_NEG_ONE,
+            RawBox::new(
+                &[Color::Red, Color::Red],
+                &[1, 0],
+                &[Integer::from(1), Integer::from(1)],
+                &[2, 1],
+            ),
         );
 
         Self {
@@ -201,6 +213,12 @@ impl BoxArena {
             cache,
             random_state,
         }
+    }
+
+    /// Returns the next available ID
+    #[inline(always)]
+    fn next_id(&self) -> BoxId {
+        BoxId(self.colors.len() as u32)
     }
 
     /// Gets the raw data of a box given by its id
@@ -244,19 +262,14 @@ impl BoxArena {
         new_id
     }
 
-    #[inline(always)]
-    fn next_id(&self) -> BoxId {
-        BoxId(self.colors.len() as u32)
-    }
-
     /// Wraps an existing expression in a new box container
-    pub fn wrap_in_box(&mut self, source: BoxId, color: Color, multiplicity: u64) -> BoxId {
+    pub fn wrap_in_box(&mut self, source: BoxId, color: Color, multiplicity: Integer) -> BoxId {
         let source_idx = source.index();
         let source_len = self.lengths[source_idx] as usize;
 
         let mut colors = vec![color];
         let mut arities = vec![1];
-        let mut multiplicities = vec![1];
+        let mut multiplicities = vec![Integer::from(1)];
         let mut lengths = vec![1 + source_len as u32];
 
         // copy source elements
@@ -267,9 +280,9 @@ impl BoxArena {
             arities.push(self.arities[curr_idx]);
 
             if i == 0 {
-                multiplicities.push(multiplicity);
+                multiplicities.push(multiplicity.clone());
             } else {
-                multiplicities.push(self.multiplicities[curr_idx]);
+                multiplicities.push(self.multiplicities[curr_idx].clone());
             }
 
             lengths.push(self.lengths[curr_idx]);
@@ -280,119 +293,183 @@ impl BoxArena {
         self.commit(raw)
     }
 
-    pub fn one(&mut self) -> BoxId {
-        self.wrap_in_box(BoxArena::ZERO, Color::Black, 1)
+    pub fn from_u32(&mut self, num: u32) -> BoxId {
+        self.wrap_in_box(
+            BoxArena::ZERO,
+            Color::Black,
+            Integer::from(<u64>::from(num)),
+        )
     }
 
-    pub fn one_anti(&mut self) -> BoxId {
-        self.wrap_in_box(BoxArena::ZERO, Color::Red, 1)
+    pub fn from_i32(&mut self, num: i32) -> BoxId {
+        if num < 0 {
+            self.wrap_in_box(
+                BoxArena::ANTI_ZERO,
+                Color::Black,
+                Integer::from(<u64>::from(num.unsigned_abs())),
+            )
+        } else {
+            self.wrap_in_box(
+                BoxArena::ZERO,
+                Color::Black,
+                Integer::from(<u64>::from(num.unsigned_abs())),
+            )
+        }
     }
 
-    pub fn neg_one(&mut self) -> BoxId {
-        self.wrap_in_box(BoxArena::ANTI_ZERO, Color::Black, 1)
+    /// Returns the outer color of a box
+    pub fn get_box_color(&self, box_id: BoxId) -> Color {
+        self.colors[box_id.index()]
     }
 
-    pub fn neg_one_anti(&mut self) -> BoxId {
-        self.wrap_in_box(BoxArena::ANTI_ZERO, Color::Red, 1)
+    /// Returns the arity of a box
+    pub fn get_box_arity(&self, box_id: BoxId) -> u32 {
+        self.arities[box_id.index()]
     }
 
+    /// Returns the arity of a box
+    pub fn get_box_multiplicity(&self, box_id: BoxId) -> Integer {
+        self.multiplicities[box_id.index()].clone()
+    }
+
+    /// Returns the number of rows occupied by this box (including itself)
+    pub fn get_box_len(&self, box_id: BoxId) -> u32 {
+        self.lengths[box_id.index()]
+    }
+
+    /// Checks if two boxes have the same content structure (ignoring their outer colors)
+    pub fn equal_content(&self, left: BoxId, right: BoxId) -> bool {
+        let left_len = self.get_box_len(left) as usize;
+        let right_len = self.get_box_len(right) as usize;
+
+        if left_len != right_len {
+            return false;
+        }
+
+        let left_start = left.index();
+        let right_start = right.index();
+        let left_range = left_start..(left_start + left_len);
+        let right_range = right_start..(right_start + right_len);
+
+        let left_colors = left_start + 1..(left_start + left_len);
+        let right_colors = right_start + 1..(right_start + right_len);
+
+        self.colors[left_colors] == self.colors[right_colors]
+            && self.arities[left_range.clone()] == self.arities[right_range.clone()]
+            && self.lengths[left_range] == self.lengths[right_range]
+    }
+
+    /// Hashes the content of a box only (ignoring its outer color)
+    pub fn hash_box_content(&self, box_id: BoxId) -> u64 {
+        let mut hasher = self.random_state.build_hasher();
+
+        let start = box_id.index();
+        let len = self.get_box_len(box_id) as usize;
+        let range = start..(start + len);
+        self.colors[start + 1..(start + len)].hash(&mut hasher);
+        self.arities[range.clone()].hash(&mut hasher);
+        self.lengths[range].hash(&mut hasher);
+
+        hasher.finish()
+    }
+
+    /// Adds two boxes
     pub fn add(&mut self, lhs: BoxId, rhs: BoxId) -> BoxId {
-        let lhs_idx = lhs.index();
-        let rhs_idx = rhs.index();
+        let mut unique_children: RapidHashMap<u64, (BoxId, Color, Integer)> = RapidHashMap::new();
 
-        let lhs_len = self.lengths[lhs_idx] as usize;
-        let rhs_len = self.lengths[rhs_idx] as usize;
-
-        let lhs_col = self.colors[lhs_idx];
-        let rhs_col = self.colors[rhs_idx];
-
-        let mut unique_children: RapidHashMap<u64, (usize, u64)> = RapidHashMap::new();
-        let mut slices = Vec::new();
-
-        let mut add_boxes = |start_idx: usize, total_len: usize, arena: &BoxArena| {
-            let mut curr = start_idx + 1; // Skip the outer container token
-            let end = start_idx + total_len;
+        let mut add_child_boxes = |box_id @ BoxId(start_idx): BoxId| {
+            let box_len = self.get_box_len(box_id);
+            let mut curr = start_idx + 1;
+            let end = start_idx + box_len;
 
             while curr < end {
-                let child_len = arena.lengths[curr] as usize;
-                let slice = BoxSlice {
-                    start: curr,
-                    len: child_len,
-                };
-                let struct_hash = slice.calculate_hash(arena);
-                let current_mult = arena.multiplicities[curr];
+                let curr_id = BoxId::new(curr);
+                let curr_mul = self.multiplicities[curr as usize].clone();
+                let curr_col = self.colors[curr as usize];
+                let curr_len = self.lengths[curr as usize];
+
+                let struct_hash = self.hash_box_content(curr_id);
 
                 // check if a box exists that has the same structure except for the color of the outer box
                 let mut found_match = false;
-                if let Some(&(existing_plan_idx, _)) = unique_children.get(&struct_hash) {
-                    // Double check for hash collisions
-                    let match_slice: BoxSlice = slices[existing_plan_idx];
-                    if slice.is_equal_to(&match_slice, arena) {
-                        let current_col = self.colors[curr];
-                        if let Some((_, mul)) = unique_children.get_mut(&struct_hash) {
-                            if current_col == Color::Red {
-                                *mul = mul.saturating_sub(current_mult);
-                            } else {
-                                *mul = mul.saturating_add(current_mult);
-                            }
-                            found_match = true;
+                if let Some((other_id, other_col, other_mul)) =
+                    unique_children.get_mut(&struct_hash)
+                    && self.equal_content(curr_id, *other_id)
+                {
+                    let curr_mul = curr_mul.clone();
+                    if curr_col + *other_col == Color::Red {
+                        if curr_mul < *other_mul {
+                            *other_mul -= curr_mul;
+                        } else {
+                            *other_mul = curr_mul - other_mul.clone();
+                            *other_col = curr_col;
                         }
+                    } else {
+                        *other_mul += curr_mul;
                     }
+                    found_match = true;
                 }
 
                 if !found_match {
-                    let slice_idx = slices.len();
-                    slices.push(slice);
-                    unique_children.insert(struct_hash, (slice_idx, current_mult));
+                    unique_children.insert(struct_hash, (curr_id, curr_col, curr_mul));
                 }
 
-                curr += child_len;
+                curr += curr_len;
             }
         };
 
-        // add immediate children
-        add_boxes(lhs_idx, lhs_len, self);
-        add_boxes(rhs_idx, rhs_len, self);
+        // add child boxes
+        add_child_boxes(lhs);
+        add_child_boxes(rhs);
 
-        // push new consolidated container root
         let mut colors = vec![];
         let mut arities = vec![];
         let mut multiplicities = vec![];
         let mut lengths = vec![];
 
-        let new_color = lhs_col + rhs_col;
-        let final_arity = slices.len();
+        let lhs_col = self.get_box_color(lhs);
+        let rhs_col = self.get_box_color(rhs);
+        let final_color = lhs_col + rhs_col;
+        let mut final_arity = unique_children.len();
 
-        colors.push(new_color);
-        arities.push(final_arity as u32);
-        multiplicities.push(1);
-        lengths.push(1);
+        colors.push(final_color);
+        arities.push(0);
+        multiplicities.push(Integer::from(1));
+        lengths.push(0);
 
-        // initialize data for unique slices
-        let mut written_content_len = 0;
-        for slice in slices {
-            let struct_hash = slice.calculate_hash(self);
-            let final_mul = unique_children.get(&struct_hash).unwrap().1 as u64;
+        // initialize data for unique children
+        let mut written_len = 0;
+        for (id, col, mul) in unique_children.values() {
+            // skip boxes that got annihilated
+            if *mul == 0 {
+                final_arity = final_arity.saturating_sub(1);
+                continue;
+            }
 
-            for i in 0..slice.len {
-                let src_idx = slice.start + i;
+            let start = id.id();
+            let len = self.get_box_len(*id);
+            for i in 0..len {
+                let src_idx = start + i;
 
-                colors.push(self.colors[src_idx]);
-                arities.push(self.arities[src_idx]);
+                colors.push(*col);
+                arities.push(self.arities[src_idx as usize]);
 
                 if i == 0 {
-                    multiplicities.push(final_mul);
+                    multiplicities.push(mul.clone());
                 } else {
-                    multiplicities.push(self.multiplicities[src_idx]);
+                    multiplicities.push(self.multiplicities[src_idx as usize].clone());
                 }
 
-                lengths.push(self.lengths[src_idx]);
-                written_content_len += 1;
+                lengths.push(self.lengths[src_idx as usize]);
+                written_len += 1;
             }
         }
 
+        // update arity
+        arities[0] = final_arity as u32;
+
         // update total length
-        lengths[0] = (1 + written_content_len) as u32;
+        lengths[0] = (1 + written_len) as u32;
 
         let raw = RawBox::new(&colors, &arities, &multiplicities, &lengths);
         self.commit(raw)
@@ -431,41 +508,6 @@ impl BoxArena {
 //     }
 // }
 
-#[derive(Clone, Copy)]
-struct BoxSlice {
-    start: usize,
-    len: usize,
-}
-
-impl BoxSlice {
-    fn is_equal_to(&self, other: &BoxSlice, arena: &BoxArena) -> bool {
-        if self.len != other.len {
-            return false;
-        }
-
-        let range1 = self.start..(self.start + self.len);
-        let range2 = other.start..(other.start + other.len);
-
-        let colors_range1 = self.start + 1..(self.start + self.len);
-        let colors_range2 = other.start + 1..(other.start + other.len);
-
-        arena.colors[colors_range1] == arena.colors[colors_range2]
-            && arena.arities[range1.clone()] == arena.arities[range2.clone()]
-            && arena.lengths[range1] == arena.lengths[range2]
-    }
-
-    fn calculate_hash(&self, arena: &BoxArena) -> u64 {
-        let mut hasher = arena.random_state.build_hasher();
-
-        let range = self.start..(self.start + self.len);
-        arena.colors[self.start + 1..(self.start + self.len)].hash(&mut hasher);
-        arena.arities[range.clone()].hash(&mut hasher);
-        arena.lengths[range].hash(&mut hasher);
-
-        hasher.finish()
-    }
-}
-
 // impl<'a> std::ops::Mul<BoxId> for BoxMut<'a> {
 //     type Output = BoxId;
 //
@@ -484,8 +526,28 @@ mod tests {
         let zero = BoxArena::ZERO;
 
         let two = arena.add(BoxArena::ONE, BoxArena::ONE);
-        let expected = arena.wrap_in_box(zero, Color::Black, 2);
-
+        let expected = arena.wrap_in_box(zero, Color::Black, Integer::from(2));
         assert_eq!(two, expected);
+
+        let minus_two = arena.add(BoxArena::NEG_ONE, BoxArena::NEG_ONE);
+        let expected = arena.wrap_in_box(BoxArena::ANTI_ZERO, Color::Black, Integer::from(2));
+        assert_eq!(minus_two, expected);
+
+        let minus_one = arena.wrap_in_box(BoxArena::ANTI_ZERO, Color::Black, Integer::from(1));
+        let zero = arena.add(minus_one, BoxArena::ONE);
+        assert_eq!(zero, BoxArena::ZERO);
+
+        let two = arena.from_u32(2);
+        let three = arena.from_u32(3);
+        let five = arena.add(two, three);
+        let expected = arena.from_u32(5);
+        assert_eq!(five, expected);
+
+        let minus_two = arena.from_i32(-2);
+        let three = arena.from_u32(3);
+        let one = arena.add(minus_two, three);
+        let expected = arena.from_u32(1);
+
+        assert_eq!(one, expected);
     }
 }
