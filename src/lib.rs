@@ -23,6 +23,7 @@ pub mod function;
 mod list;
 #[macro_use]
 pub mod polynumber;
+pub mod alt_model;
 pub mod derivative;
 mod ord;
 pub mod ordered_set;
@@ -193,10 +194,48 @@ impl MBox {
     pub fn depth(&self) -> usize {
         self.as_boxes()
             .keys()
-            .map(|m_box| m_box.depth())
+            .map(|k| k.depth() + 1)
             .max()
-            .map(|max_sub_depth| max_sub_depth + 1)
             .unwrap_or(0)
+    }
+
+    /// Calculates the total number of boxes contained in this box
+    pub fn box_count(&self) -> u64 {
+        let map = self.as_boxes();
+        if map.is_empty() {
+            return 0;
+        }
+
+        // Sum the leaves of all inner keys, multiplied by their counts/exponents
+        map.iter()
+            .map(|(key, &count)| key.box_count() * count)
+            .sum()
+    }
+
+    /// Counts only the multiplicities of leaf nodes that reside at the maximum depth of this box
+    pub fn outer_leaf_counts(&self) -> Vec<u64> {
+        let max_depth = self.depth();
+
+        if max_depth == 0 {
+            return vec![0];
+        }
+
+        Self::count_at_depth(self, 0, max_depth)
+    }
+
+    fn count_at_depth(&self, current_depth: usize, target_depth: usize) -> Vec<u64> {
+        // If we have reached the parent layer of the target depth,
+        // every entry in this map is an outermost leaf node
+        if current_depth + 1 == target_depth {
+            let ann = self.clone().annihilate();
+            let map = ann.into_boxes();
+            return map.into_iter().map(|(_, value)| value).collect();
+        }
+
+        let map = self.as_boxes();
+        map.iter()
+            .flat_map(|(key, _)| Self::count_at_depth(key, current_depth + 1, target_depth))
+            .collect()
     }
 
     /// Calculates the size of this box (number of elements including multiplicities)
@@ -454,6 +493,18 @@ mod tests {
 
     #[test]
     fn test_depth() {
+        let empty = MBox::new();
+        assert_eq!(empty.depth(), 0);
+
+        let one = num!(1);
+        assert_eq!(one.depth(), 1);
+
+        let x = var!(0);
+        assert_eq!(x.depth(), 2);
+
+        let v_1 = var!(1);
+        assert_eq!(v_1.depth(), 3);
+
         let pix = pixel![1, 2];
         let dep = pix.depth();
         assert_eq!(dep, 3);
