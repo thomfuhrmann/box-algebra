@@ -306,7 +306,7 @@ impl BoxArena {
         let lhs_col = self.colors[lhs_idx];
         let rhs_col = self.colors[rhs_idx];
 
-        let mut unique_children: RapidHashMap<u64, (usize, i64)> = RapidHashMap::new();
+        let mut unique_children: RapidHashMap<u64, (usize, u64)> = RapidHashMap::new();
         let mut slices = Vec::new();
 
         let mut add_boxes = |start_idx: usize, total_len: usize, arena: &BoxArena| {
@@ -320,7 +320,7 @@ impl BoxArena {
                     len: child_len,
                 };
                 let struct_hash = slice.calculate_hash(arena);
-                let mut current_mult = arena.multiplicities[curr] as i64;
+                let current_mult = arena.multiplicities[curr];
 
                 // check if a box exists that has the same structure except for the color of the outer box
                 let mut found_match = false;
