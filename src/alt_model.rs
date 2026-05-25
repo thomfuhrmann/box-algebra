@@ -1,4 +1,7 @@
-use malachite::Integer;
+use malachite::{
+    Natural,
+    base::num::arithmetic::traits::{SaturatingSub, SaturatingSubAssign},
+};
 
 use std::{
     hash::{BuildHasher, Hash, Hasher},
@@ -39,7 +42,7 @@ impl From<usize> for BoxId {
 pub struct RawBox<'a> {
     pub colors: &'a [Color],
     pub arities: &'a [u32],
-    pub multiplicities: &'a [Integer],
+    pub multiplicities: &'a [Natural],
     pub lengths: &'a [u32],
 }
 
@@ -47,7 +50,7 @@ impl<'a> RawBox<'a> {
     pub fn new(
         colors: &'a [Color],
         arities: &'a [u32],
-        multiplicities: &'a [Integer],
+        multiplicities: &'a [Natural],
         lengths: &'a [u32],
     ) -> Self {
         Self {
@@ -108,7 +111,7 @@ pub struct BoxArena {
     /// Numbers of child boxes
     pub arities: Vec<u32>,
     /// Multiplicities of boxes
-    pub multiplicities: Vec<Integer>,
+    pub multiplicities: Vec<Natural>,
     /// Numbers of rows occupied for a box
     pub lengths: Vec<u32>,
     /// Pointers to the starting indices of active boxes
@@ -161,18 +164,18 @@ impl BoxArena {
 
         register_box(
             Self::ZERO,
-            RawBox::new(&[Color::Black], &[0], &[Integer::from(1)], &[1]),
+            RawBox::new(&[Color::Black], &[0], &[Natural::from(1_u32)], &[1]),
         );
         register_box(
             Self::ANTI_ZERO,
-            RawBox::new(&[Color::Red], &[0], &[Integer::from(1)], &[1]),
+            RawBox::new(&[Color::Red], &[0], &[Natural::from(1_u32)], &[1]),
         );
         register_box(
             Self::ONE,
             RawBox::new(
                 &[Color::Black, Color::Black],
                 &[1, 0],
-                &[Integer::from(1), Integer::from(1)],
+                &[Natural::from(1_u32), Natural::from(1_u32)],
                 &[2, 1],
             ),
         );
@@ -181,7 +184,7 @@ impl BoxArena {
             RawBox::new(
                 &[Color::Red, Color::Black],
                 &[1, 0],
-                &[Integer::from(1), Integer::from(1)],
+                &[Natural::from(1_u32), Natural::from(1_u32)],
                 &[2, 1],
             ),
         );
@@ -190,7 +193,7 @@ impl BoxArena {
             RawBox::new(
                 &[Color::Black, Color::Red],
                 &[1, 0],
-                &[Integer::from(1), Integer::from(1)],
+                &[Natural::from(1_u32), Natural::from(1_u32)],
                 &[2, 1],
             ),
         );
@@ -199,7 +202,7 @@ impl BoxArena {
             RawBox::new(
                 &[Color::Red, Color::Red],
                 &[1, 0],
-                &[Integer::from(1), Integer::from(1)],
+                &[Natural::from(1_u32), Natural::from(1_u32)],
                 &[2, 1],
             ),
         );
@@ -263,13 +266,13 @@ impl BoxArena {
     }
 
     /// Wraps an existing expression in a new box container
-    pub fn wrap_in_box(&mut self, source: BoxId, color: Color, multiplicity: Integer) -> BoxId {
+    pub fn wrap_in_box(&mut self, source: BoxId, color: Color, multiplicity: Natural) -> BoxId {
         let source_idx = source.index();
         let source_len = self.lengths[source_idx] as usize;
 
         let mut colors = vec![color];
         let mut arities = vec![1];
-        let mut multiplicities = vec![Integer::from(1)];
+        let mut multiplicities = vec![Natural::from(1_u32)];
         let mut lengths = vec![1 + source_len as u32];
 
         // copy source elements
@@ -297,7 +300,7 @@ impl BoxArena {
         self.wrap_in_box(
             BoxArena::ZERO,
             Color::Black,
-            Integer::from(<u64>::from(num)),
+            Natural::from(<u64>::from(num)),
         )
     }
 
@@ -306,13 +309,13 @@ impl BoxArena {
             self.wrap_in_box(
                 BoxArena::ANTI_ZERO,
                 Color::Black,
-                Integer::from(<u64>::from(num.unsigned_abs())),
+                Natural::from(<u64>::from(num.unsigned_abs())),
             )
         } else {
             self.wrap_in_box(
                 BoxArena::ZERO,
                 Color::Black,
-                Integer::from(<u64>::from(num.unsigned_abs())),
+                Natural::from(<u64>::from(num.unsigned_abs())),
             )
         }
     }
@@ -328,7 +331,7 @@ impl BoxArena {
     }
 
     /// Returns the arity of a box
-    pub fn get_box_multiplicity(&self, box_id: BoxId) -> Integer {
+    pub fn get_box_multiplicity(&self, box_id: BoxId) -> Natural {
         self.multiplicities[box_id.index()].clone()
     }
 
@@ -375,7 +378,7 @@ impl BoxArena {
 
     /// Adds two boxes
     pub fn add(&mut self, lhs: BoxId, rhs: BoxId) -> BoxId {
-        let mut unique_children: RapidHashMap<u64, (BoxId, Color, Integer)> = RapidHashMap::new();
+        let mut unique_children: RapidHashMap<u64, (BoxId, Color, Natural)> = RapidHashMap::new();
 
         let mut add_child_boxes = |box_id @ BoxId(start_idx): BoxId| {
             let box_len = self.get_box_len(box_id);
@@ -398,10 +401,10 @@ impl BoxArena {
                 {
                     let curr_mul = curr_mul.clone();
                     if curr_col + *other_col == Color::Red {
-                        if curr_mul < *other_mul {
-                            *other_mul -= curr_mul;
+                        if &curr_mul < other_mul {
+                            other_mul.saturating_sub_assign(curr_mul);
                         } else {
-                            *other_mul = curr_mul - other_mul.clone();
+                            *other_mul = curr_mul.saturating_sub(other_mul.clone());
                             *other_col = curr_col;
                         }
                     } else {
@@ -434,7 +437,7 @@ impl BoxArena {
 
         colors.push(final_color);
         arities.push(0);
-        multiplicities.push(Integer::from(1));
+        multiplicities.push(Natural::from(1_u32));
         lengths.push(0);
 
         // initialize data for unique children
@@ -526,14 +529,14 @@ mod tests {
         let zero = BoxArena::ZERO;
 
         let two = arena.add(BoxArena::ONE, BoxArena::ONE);
-        let expected = arena.wrap_in_box(zero, Color::Black, Integer::from(2));
+        let expected = arena.wrap_in_box(zero, Color::Black, Natural::from(2_u32));
         assert_eq!(two, expected);
 
         let minus_two = arena.add(BoxArena::NEG_ONE, BoxArena::NEG_ONE);
-        let expected = arena.wrap_in_box(BoxArena::ANTI_ZERO, Color::Black, Integer::from(2));
+        let expected = arena.wrap_in_box(BoxArena::ANTI_ZERO, Color::Black, Natural::from(2_u32));
         assert_eq!(minus_two, expected);
 
-        let minus_one = arena.wrap_in_box(BoxArena::ANTI_ZERO, Color::Black, Integer::from(1));
+        let minus_one = arena.wrap_in_box(BoxArena::ANTI_ZERO, Color::Black, Natural::from(1_u32));
         let zero = arena.add(minus_one, BoxArena::ONE);
         assert_eq!(zero, BoxArena::ZERO);
 
