@@ -4,6 +4,7 @@ use malachite::{
 };
 
 use std::{
+    cmp::Ordering::Equal,
     hash::{BuildHasher, Hash, Hasher},
     ops::{Add, Mul},
 };
@@ -63,7 +64,7 @@ impl<'a> RawBox<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Color {
     Black,
     Red,
@@ -232,7 +233,7 @@ impl BoxArena {
     }
 
     /// Commits a raw, uncommitted box view
-    pub fn commit(&mut self, raw: RawBox<'_>) -> BoxId {
+    fn commit(&mut self, raw: RawBox<'_>) -> BoxId {
         let hash = raw.hash(&self.random_state);
 
         // cache hit
@@ -342,7 +343,25 @@ impl BoxArena {
         self.lengths[box_id.index()]
     }
 
-    /// Checks if two boxes have the same content structure (ignoring their outer colors)
+    /// Computes the arity of a box
+    pub fn arity(&self, box_id: BoxId) -> u32 {
+        let len = self.get_box_len(box_id);
+        if len == 0 {
+            return 0;
+        }
+
+        let mut count = 0;
+        let mut idx = box_id.index() + 1;
+        let end = idx + len as usize;
+
+        while idx < end {
+            count += 1;
+            idx += self.lengths[idx] as usize;
+        }
+        count
+    }
+
+    /// Checks if two boxes have the same content structure (ignoring their outer outer colors and multiplicities)
     pub fn equal_content(&self, left: BoxId, right: BoxId) -> bool {
         let left_len = self.get_box_len(left) as usize;
         let right_len = self.get_box_len(right) as usize;
@@ -357,26 +376,96 @@ impl BoxArena {
         let left_range = left_start..(left_start + left_len);
         let right_range = right_start..(right_start + right_len);
 
-        let left_colors = left_start + 1..(left_start + left_len);
-        let right_colors = right_start + 1..(right_start + right_len);
+        let left_inner = left_start + 1..(left_start + left_len);
+        let right_inner = right_start + 1..(right_start + right_len);
 
-        self.colors[left_colors] == self.colors[right_colors]
-            // && self.multiplicities[left_range.clone()] == self.multiplicities[right_range.clone()]
+        self.colors[left_inner.clone()] == self.colors[right_inner.clone()]
+            && self.multiplicities[left_inner] == self.multiplicities[right_inner]
             && self.lengths[left_range] == self.lengths[right_range]
     }
 
-    /// Hashes the content of a box only (ignoring its outer color)
+    /// Hashes the content of a box (ignoring its outer color and multiplicity)
     pub fn hash_content(&self, box_id: BoxId) -> u64 {
         let mut hasher = self.random_state.build_hasher();
 
         let start = box_id.index();
         let len = self.get_box_len(box_id) as usize;
-        let range = start..(start + len);
+
         self.colors[start + 1..(start + len)].hash(&mut hasher);
-        // self.multiplicities[range.clone()].hash(&mut hasher);
-        self.lengths[range].hash(&mut hasher);
+        self.multiplicities[start + 1..(start + len)].hash(&mut hasher);
+        self.lengths[start..(start + len)].hash(&mut hasher);
 
         hasher.finish()
+    }
+
+    fn sort_box_content(colors: &mut [Color], multiplicities: &mut [Natural], lengths: &mut [u32]) {
+        if lengths.is_empty() {
+            return;
+        }
+
+        let total_box_len = lengths[0] as usize;
+        if total_box_len <= 1 {
+            return;
+        }
+
+        let start_idx = 1;
+        let end_idx = total_box_len;
+
+        // Gather start indices and lengths of immediate children
+        let mut child_meta = Vec::new();
+        let mut curr = start_idx;
+        while curr < end_idx {
+            let len = lengths[curr] as usize;
+            child_meta.push((curr, len));
+            curr += len;
+        }
+
+        if child_meta.len() <= 1 {
+            return;
+        }
+
+        // Sort child metadata permutation list
+        child_meta.sort_by(|&(start_a, len_a), &(start_b, len_b)| {
+            let range_a = start_a..(start_a + len_a);
+            let range_b = start_b..(start_b + len_b);
+
+            let len_cmp = lengths[range_a.clone()].cmp(&lengths[range_b.clone()]);
+            if len_cmp != Equal {
+                return len_cmp;
+            }
+
+            let col_cmp = colors[range_a.clone()].cmp(&colors[range_b.clone()]);
+            if col_cmp != Equal {
+                return col_cmp;
+            }
+
+            multiplicities[range_a].cmp(&multiplicities[range_b])
+        });
+
+        // Permute values into temporary scratch space
+        let payload_len = end_idx - start_idx;
+        let mut sorted_colors = Vec::with_capacity(payload_len);
+        let mut sorted_lens = Vec::with_capacity(payload_len);
+        let mut sorted_mults = Vec::with_capacity(payload_len);
+
+        for &(start, len) in &child_meta {
+            let range = start..(start + len);
+            sorted_colors.extend_from_slice(&colors[range.clone()]);
+            sorted_lens.extend_from_slice(&lengths[range.clone()]);
+
+            for idx in range {
+                let item = std::mem::take(&mut multiplicities[idx]);
+                sorted_mults.push(item);
+            }
+        }
+
+        let target_range = start_idx..end_idx;
+        colors[target_range.clone()].copy_from_slice(&sorted_colors);
+        lengths[target_range.clone()].copy_from_slice(&sorted_lens);
+
+        for (dest_idx, src_natural) in target_range.zip(sorted_mults) {
+            multiplicities[dest_idx] = src_natural;
+        }
     }
 
     /// Adds two boxes
@@ -551,5 +640,11 @@ mod tests {
         let two_alpha = arena.add(alpha, alpha);
         let expected = arena.wrap_in_box(BoxArena::ONE, Color::Black, Natural::from(2_u32));
         assert_eq!(two_alpha, expected);
+
+        let alpha_1 = arena.wrap_in_box(alpha, Color::Black, Natural::from(1_u32));
+        let two_alpha_1 = arena.wrap_in_box(alpha, Color::Black, Natural::from(2_u32));
+        let sum = arena.add(alpha_1, two_alpha_1);
+        let expected = arena.wrap_in_box(alpha, Color::Black, Natural::from(3_u32));
+        assert_eq!(sum, expected);
     }
 }
