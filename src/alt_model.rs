@@ -48,7 +48,7 @@ pub struct RawBox<'a> {
 }
 
 impl<'a> RawBox<'a> {
-    pub fn new(
+    fn new(
         is_ordered: &'a [bool],
         colors: &'a [Color],
         multiplicities: &'a [Natural],
@@ -62,7 +62,7 @@ impl<'a> RawBox<'a> {
         }
     }
 
-    pub fn hash(&self, random_state: &RandomState) -> u64 {
+    fn hash(&self, random_state: &RandomState) -> u64 {
         let mut hasher = random_state.build_hasher();
         self.is_ordered.hash(&mut hasher);
         self.colors.hash(&mut hasher);
@@ -75,14 +75,14 @@ impl<'a> RawBox<'a> {
 /// Raw uncomitted box data
 #[derive(Debug)]
 pub struct RawBoxMut<'a> {
-    pub is_ordered: &'a mut [bool],
-    pub colors: &'a mut [Color],
-    pub multiplicities: &'a mut [Natural],
-    pub lengths: &'a mut [u32],
+    is_ordered: &'a mut [bool],
+    colors: &'a mut [Color],
+    multiplicities: &'a mut [Natural],
+    lengths: &'a mut [u32],
 }
 
 impl<'a> RawBoxMut<'a> {
-    pub fn new(
+    fn new(
         is_ordered: &'a mut [bool],
         colors: &'a mut [Color],
         multiplicities: &'a mut [Natural],
@@ -93,6 +93,95 @@ impl<'a> RawBoxMut<'a> {
             colors,
             multiplicities,
             lengths,
+        }
+    }
+
+    /// Sorts the content of this box
+    fn sort_box(&mut self) {
+        if self.lengths.is_empty() {
+            return;
+        }
+
+        if self.is_ordered[0] {
+            return;
+        }
+
+        let total_box_len = self.lengths[0] as usize;
+        if total_box_len <= 1 {
+            return;
+        }
+
+        let start_idx = 1;
+        let end_idx = total_box_len;
+
+        // Gather start indices and lengths of immediate children
+        let mut child_meta = Vec::new();
+        let mut curr = start_idx;
+        while curr < end_idx {
+            let len = self.lengths[curr] as usize;
+            child_meta.push((curr, len));
+            curr += len;
+        }
+
+        if child_meta.len() <= 1 {
+            return;
+        }
+
+        // Sort child metadata permutation list
+        child_meta.sort_by(|&(start_a, len_a), &(start_b, len_b)| {
+            let range_a = start_a..(start_a + len_a);
+            let range_b = start_b..(start_b + len_b);
+
+            let len_cmp = self.lengths[range_a.clone()].cmp(&self.lengths[range_b.clone()]);
+            if len_cmp != Equal {
+                return len_cmp;
+            }
+
+            let col_cmp = self.colors[range_a.clone()].cmp(&self.colors[range_b.clone()]);
+            if col_cmp != Equal {
+                return col_cmp;
+            }
+
+            self.multiplicities[range_a].cmp(&self.multiplicities[range_b])
+        });
+
+        // Permute values into temporary scratch space
+        let payload_len = end_idx - start_idx;
+        let mut sorted_is_ordered = Vec::with_capacity(payload_len);
+        let mut sorted_colors = Vec::with_capacity(payload_len);
+        let mut sorted_lens = Vec::with_capacity(payload_len);
+        let mut sorted_mults = Vec::with_capacity(payload_len);
+
+        for &(start, len) in &child_meta {
+            let range = start..(start + len);
+            sorted_is_ordered.extend_from_slice(&self.is_ordered[range.clone()]);
+            sorted_colors.extend_from_slice(&self.colors[range.clone()]);
+            sorted_lens.extend_from_slice(&self.lengths[range.clone()]);
+
+            for idx in range {
+                let item = std::mem::take(&mut self.multiplicities[idx]);
+                sorted_mults.push(item);
+            }
+        }
+
+        let target_range = start_idx..end_idx;
+        self.is_ordered[target_range.clone()].copy_from_slice(&sorted_is_ordered);
+        self.colors[target_range.clone()].copy_from_slice(&sorted_colors);
+        self.lengths[target_range.clone()].copy_from_slice(&sorted_lens);
+
+        for (dest_idx, src_natural) in target_range.zip(sorted_mults) {
+            self.multiplicities[dest_idx] = src_natural;
+        }
+    }
+}
+
+impl<'a> From<RawBoxMut<'a>> for RawBox<'a> {
+    fn from(raw_mut: RawBoxMut<'a>) -> Self {
+        RawBox {
+            is_ordered: raw_mut.is_ordered,
+            colors: raw_mut.colors,
+            multiplicities: raw_mut.multiplicities,
+            lengths: raw_mut.lengths,
         }
     }
 }
@@ -163,6 +252,8 @@ impl BoxArena {
     pub const NEG_ONE: BoxId = BoxId(6);
     pub const ANTI_NEG_ONE: BoxId = BoxId(8);
     pub const ALPHA: BoxId = BoxId(10);
+    pub const ANTI_ALPHA: BoxId = BoxId(13);
+    pub const NEG_ALPHA: BoxId = BoxId(16);
 
     /// Initializes the arena with elementary objects
     pub fn new() -> Self {
@@ -246,6 +337,32 @@ impl BoxArena {
                 &[3, 2, 1],
             ),
         );
+        register_box(
+            Self::ANTI_ALPHA,
+            RawBox::new(
+                &[false, false, false],
+                &[Color::Red, Color::Black, Color::Black],
+                &[
+                    Natural::from(1_u32),
+                    Natural::from(1_u32),
+                    Natural::from(1_u32),
+                ],
+                &[3, 2, 1],
+            ),
+        );
+        register_box(
+            Self::NEG_ALPHA,
+            RawBox::new(
+                &[false, false, false],
+                &[Color::Black, Color::Red, Color::Black],
+                &[
+                    Natural::from(1_u32),
+                    Natural::from(1_u32),
+                    Natural::from(1_u32),
+                ],
+                &[3, 2, 1],
+            ),
+        );
 
         Self {
             is_ordered,
@@ -303,6 +420,12 @@ impl BoxArena {
         self.lengths.extend_from_slice(raw.lengths);
 
         new_id
+    }
+
+    /// Sorts the box before commiting it
+    fn commit_sorted(&mut self, mut raw: RawBoxMut<'_>) -> BoxId {
+        raw.sort_box();
+        self.commit(RawBox::from(raw))
     }
 
     /// Wraps an existing expression in a new box container
@@ -463,79 +586,6 @@ impl BoxArena {
         hasher.finish()
     }
 
-    pub fn sort_box_content(raw_box: &mut RawBoxMut) {
-        if raw_box.lengths.is_empty() {
-            return;
-        }
-
-        let total_box_len = raw_box.lengths[0] as usize;
-        if total_box_len <= 1 {
-            return;
-        }
-
-        let start_idx = 1;
-        let end_idx = total_box_len;
-
-        // Gather start indices and lengths of immediate children
-        let mut child_meta = Vec::new();
-        let mut curr = start_idx;
-        while curr < end_idx {
-            let len = raw_box.lengths[curr] as usize;
-            child_meta.push((curr, len));
-            curr += len;
-        }
-
-        if child_meta.len() <= 1 {
-            return;
-        }
-
-        // Sort child metadata permutation list
-        child_meta.sort_by(|&(start_a, len_a), &(start_b, len_b)| {
-            let range_a = start_a..(start_a + len_a);
-            let range_b = start_b..(start_b + len_b);
-
-            let len_cmp = raw_box.lengths[range_a.clone()].cmp(&raw_box.lengths[range_b.clone()]);
-            if len_cmp != Equal {
-                return len_cmp;
-            }
-
-            let col_cmp = raw_box.colors[range_a.clone()].cmp(&raw_box.colors[range_b.clone()]);
-            if col_cmp != Equal {
-                return col_cmp;
-            }
-
-            raw_box.multiplicities[range_a].cmp(&raw_box.multiplicities[range_b])
-        });
-
-        // Permute values into temporary scratch space
-        let payload_len = end_idx - start_idx;
-        let mut sorted_is_ordered = Vec::with_capacity(payload_len);
-        let mut sorted_colors = Vec::with_capacity(payload_len);
-        let mut sorted_lens = Vec::with_capacity(payload_len);
-        let mut sorted_mults = Vec::with_capacity(payload_len);
-
-        for &(start, len) in &child_meta {
-            let range = start..(start + len);
-            sorted_is_ordered.extend_from_slice(&raw_box.is_ordered[range.clone()]);
-            sorted_colors.extend_from_slice(&raw_box.colors[range.clone()]);
-            sorted_lens.extend_from_slice(&raw_box.lengths[range.clone()]);
-
-            for idx in range {
-                let item = std::mem::take(&mut raw_box.multiplicities[idx]);
-                sorted_mults.push(item);
-            }
-        }
-
-        let target_range = start_idx..end_idx;
-        raw_box.is_ordered[target_range.clone()].copy_from_slice(&sorted_is_ordered);
-        raw_box.colors[target_range.clone()].copy_from_slice(&sorted_colors);
-        raw_box.lengths[target_range.clone()].copy_from_slice(&sorted_lens);
-
-        for (dest_idx, src_natural) in target_range.zip(sorted_mults) {
-            raw_box.multiplicities[dest_idx] = src_natural;
-        }
-    }
-
     /// Adds two boxes (unordered)
     pub fn add(&mut self, lhs: BoxId, rhs: BoxId) -> BoxId {
         let mut unique_children: RapidHashMap<u64, (BoxId, Color, Natural)> = RapidHashMap::new();
@@ -613,11 +663,12 @@ impl BoxArena {
                 let src_idx = start + i;
 
                 is_ordered.push(self.is_ordered[src_idx as usize]);
-                colors.push(*col);
 
                 if i == 0 {
+                    colors.push(*col);
                     multiplicities.push(mul.clone());
                 } else {
+                    colors.push(self.colors[src_idx as usize]);
                     multiplicities.push(self.multiplicities[src_idx as usize].clone());
                 }
 
@@ -629,8 +680,130 @@ impl BoxArena {
         // update total length
         lengths[0] = (1 + written_len) as u32;
 
-        let raw = RawBox::new(&is_ordered, &colors, &multiplicities, &lengths);
-        self.commit(raw)
+        let raw = RawBoxMut::new(
+            &mut is_ordered,
+            &mut colors,
+            &mut multiplicities,
+            &mut lengths,
+        );
+        self.commit_sorted(raw)
+    }
+
+    /// Multiplication of boxes
+    pub fn mul(&mut self, lhs: BoxId, rhs: BoxId) -> BoxId {
+        // extract left children
+        let mut lhs_children = Vec::new();
+        let BoxId(lhs_start) = lhs;
+        let lhs_len = self.box_len(lhs);
+        let mut curr = lhs_start + 1;
+        let end = lhs_start + lhs_len;
+        while curr < end {
+            let child_id = BoxId::new(curr);
+            lhs_children.push(child_id);
+            curr += self.lengths[curr as usize];
+        }
+
+        // extract right children
+        let mut rhs_children = Vec::new();
+        let BoxId(rhs_start) = rhs;
+        let rhs_len = self.box_len(rhs);
+        let mut curr = rhs_start + 1;
+        let end = rhs_start + rhs_len;
+        while curr < end {
+            let child_id = BoxId::new(curr);
+            rhs_children.push(child_id);
+            curr += self.lengths[curr as usize];
+        }
+
+        // This map mirrors the structure of your `add` function to handle identity and color rules.
+        let mut unique_children: RapidHashMap<u64, (BoxId, Color, Natural)> = RapidHashMap::new();
+
+        for &left_child in &lhs_children {
+            for &right_child in &rhs_children {
+                let child_id = self.add(left_child, right_child);
+
+                let child_idx = child_id.id() as usize;
+                let left_mul = self.box_multiplicity(left_child);
+                let right_mul = self.box_multiplicity(right_child);
+                let curr_mul = left_mul * right_mul;
+                let curr_col = self.colors[child_idx];
+
+                let struct_hash = self.hash_content(child_id);
+
+                let mut found_match = false;
+                if let Some((other_id, other_col, other_mul)) =
+                    unique_children.get_mut(&struct_hash)
+                    && self.equal_content(child_id, *other_id)
+                {
+                    let curr_mul = curr_mul.clone();
+                    if curr_col + *other_col == Color::Red {
+                        if &curr_mul < other_mul {
+                            other_mul.saturating_sub_assign(curr_mul);
+                        } else {
+                            *other_mul = curr_mul.saturating_sub(other_mul.clone());
+                            *other_col = curr_col;
+                        }
+                    } else {
+                        *other_mul += curr_mul;
+                    }
+                    found_match = true;
+                }
+
+                if !found_match {
+                    unique_children.insert(struct_hash, (child_id, curr_col, curr_mul));
+                }
+            }
+        }
+
+        let mut is_ordered = vec![];
+        let mut colors = vec![];
+        let mut multiplicities = vec![];
+        let mut lengths = vec![];
+
+        let lhs_col = self.box_color(lhs);
+        let rhs_col = self.box_color(rhs);
+        let final_color = lhs_col + rhs_col;
+
+        is_ordered.push(false);
+        colors.push(final_color);
+        multiplicities.push(Natural::from(1_u32));
+        lengths.push(0);
+
+        let mut written_len = 0;
+        for (id, col, mul) in unique_children.values() {
+            if *mul == 0 {
+                continue;
+            }
+
+            let start = id.id();
+            let len = self.box_len(*id);
+            for i in 0..len {
+                let src_idx = (start + i) as usize;
+
+                is_ordered.push(self.is_ordered[src_idx]);
+
+                if i == 0 {
+                    colors.push(*col);
+                    multiplicities.push(mul.clone());
+                } else {
+                    colors.push(self.colors[src_idx]);
+                    multiplicities.push(self.multiplicities[src_idx].clone());
+                }
+
+                lengths.push(self.lengths[src_idx]);
+                written_len += 1;
+            }
+        }
+
+        lengths[0] = (1 + written_len) as u32;
+
+        let raw = RawBoxMut::new(
+            &mut is_ordered,
+            &mut colors,
+            &mut multiplicities,
+            &mut lengths,
+        );
+        self.commit_sorted(raw)
     }
 }
 
@@ -727,5 +900,48 @@ mod tests {
         let sum = arena.add(alpha_1, two_alpha_1);
         let expected = arena.wrap_in_box(alpha, false, Color::Black, Natural::from(3_u32));
         assert_eq!(sum, expected);
+
+        let one = BoxArena::ONE;
+        let alpha = BoxArena::ALPHA;
+        let sum_1 = arena.add(one, alpha);
+        let sum_2 = arena.add(alpha, one);
+        assert_eq!(sum_1, sum_2);
+    }
+
+    #[test]
+    fn test_mul() {
+        let mut arena = BoxArena::new();
+        let two = arena.from_u32(2);
+        let three = arena.from_u32(3);
+        let six = arena.mul(two, three);
+        let expected = arena.from_u32(6);
+        assert_eq!(six, expected);
+
+        let six_2 = arena.mul(three, two);
+        assert_eq!(six, six_2);
+
+        let m_three = arena.from_i32(-3);
+        let m_six = arena.mul(two, m_three);
+        let expected = arena.from_i32(-6);
+        assert_eq!(m_six, expected);
+
+        let alpha = BoxArena::ALPHA;
+        let alpha_2 = arena.mul(alpha, alpha);
+        let expected = arena.wrap_in_box(two, false, Color::Black, Natural::from(1_u32));
+        assert_eq!(alpha_2, expected);
+
+        let one = BoxArena::ONE;
+        let alpha = BoxArena::ALPHA;
+        let p1 = arena.add(one, alpha);
+        let p2 = arena.add(one, BoxArena::NEG_ALPHA);
+        let prod = arena.mul(p1, p2);
+        let anti_two = arena.wrap_in_box(BoxArena::ZERO, false, Color::Red, Natural::from(2_u32));
+        let neg_alpha_2 = arena.wrap_in_box(anti_two, false, Color::Black, Natural::from(1_u32));
+        let expected = arena.add(one, neg_alpha_2);
+
+        println!("{:?}", arena.get(prod));
+        println!("{:?}", arena.get(expected));
+
+        assert_eq!(prod, expected);
     }
 }
