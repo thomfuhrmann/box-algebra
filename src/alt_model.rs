@@ -1,7 +1,6 @@
 use malachite::{
     Natural,
     base::num::arithmetic::traits::{SaturatingSub, SaturatingSubAssign},
-    integer::{arithmetic::neg, logic::and},
 };
 
 use std::{
@@ -466,6 +465,20 @@ impl Mul<Color> for Color {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BoxConstants {
+    pub zero: BoxId<NumBox>,
+    pub anti_zero: BoxId<NumBox>,
+    pub one: BoxId<NumBox>,
+    pub neg_one: BoxId<NumBox>,
+    pub anti_one: BoxId<NumBox>,
+    pub anti_neg_one: BoxId<NumBox>,
+    pub alpha: BoxId<PolynumBox>,
+    pub neg_alpha: BoxId<PolynumBox>,
+    pub anti_alpha: BoxId<PolynumBox>,
+    pub anti_neg_alpha: BoxId<PolynumBox>,
+}
+
 /// Global arena for box computations
 #[derive(Debug)]
 pub struct BoxArena {
@@ -483,6 +496,8 @@ pub struct BoxArena {
     pub cache: RapidHashMap<u64, BoxId<AnyBox>>,
     /// Random state for hasher
     pub random_state: RandomState,
+    /// Predefined constants
+    pub constants: BoxConstants,
 }
 
 impl Default for BoxArena {
@@ -493,148 +508,127 @@ impl Default for BoxArena {
 
 const ARENA_INIT_CAPACITY: usize = 32;
 impl BoxArena {
-    pub const ZERO: BoxId<NumBox> = BoxId::new(0);
-    pub const ANTI_ZERO: BoxId<NumBox> = BoxId::new(1);
-    pub const ONE: BoxId<NumBox> = BoxId::new(2);
-    pub const ANTI_ONE: BoxId<NumBox> = BoxId::new(4);
-    pub const NEG_ONE: BoxId<NumBox> = BoxId::new(6);
-    pub const ANTI_NEG_ONE: BoxId<NumBox> = BoxId::new(8);
-    pub const ALPHA: BoxId<PolynumBox> = BoxId::new(10);
-    pub const ANTI_ALPHA: BoxId<PolynumBox> = BoxId::new(13);
-    pub const NEG_ALPHA: BoxId<PolynumBox> = BoxId::new(16);
-
     /// Initializes the arena with elementary objects
     pub fn new() -> Self {
         let random_state = RandomState::new();
+
+        let active_expressions = Vec::with_capacity(ARENA_INIT_CAPACITY);
         let mut cache = RapidHashMap::new();
 
         let mut kinds = Vec::with_capacity(ARENA_INIT_CAPACITY);
         let mut colors = Vec::with_capacity(ARENA_INIT_CAPACITY);
         let mut multiplicities = Vec::with_capacity(ARENA_INIT_CAPACITY);
         let mut lengths = Vec::with_capacity(ARENA_INIT_CAPACITY);
-        let active_expressions = Vec::with_capacity(ARENA_INIT_CAPACITY);
 
-        let mut register_box =
-            |id: BoxId<AnyBox>, raw_box: RawBox<AnyBox>, kind: BoxKind, hash: u64| {
-                assert_eq!(
-                    lengths.len(),
-                    id.index() as usize,
-                    "Index mismatch while registering box with id: {}",
-                    id.index()
-                );
+        let mut register_box = |kind: BoxKind, hash: u64, raw_box: RawBox<'_, AnyBox>| {
+            let index = lengths.len() as u32;
+            let id = BoxId::<AnyBox>::new(index);
+            // Commit data
+            cache.insert(hash, id);
+            kinds.push(kind);
 
-                // Commit data
-                cache.insert(hash, id);
-                kinds.push(kind);
+            colors.extend_from_slice(raw_box.colors);
+            multiplicities.extend_from_slice(raw_box.multiplicities);
+            lengths.extend_from_slice(raw_box.lengths);
+            index
+        };
 
-                colors.extend_from_slice(raw_box.colors);
-                multiplicities.extend_from_slice(raw_box.multiplicities);
-                lengths.extend_from_slice(raw_box.lengths);
-            };
+        let mult = [Natural::from(1_u32)];
+        let raw_zero = RawBox::<NumBox>::new(&[Color::Black], &mult, &[1]);
+        let zero_id = BoxId::<NumBox>::new(register_box(
+            raw_zero.kind(),
+            raw_zero.hash(&random_state),
+            raw_zero.cast(),
+        ));
 
-        let zero = RawBoxOwned::<NumBox>::new_with(
-            vec![Color::Black],
-            vec![Natural::from(1_u32)],
-            vec![1],
+        let raw_anti_zero = RawBox::<NumBox>::new(&[Color::Red], &mult, &[1]);
+        let anti_zero_id = BoxId::<NumBox>::new(register_box(
+            raw_anti_zero.kind(),
+            raw_anti_zero.hash(&random_state),
+            raw_anti_zero.cast(),
+        ));
+
+        let mult = [Natural::from(1_u32), Natural::from(1_u32)];
+        let raw_one = RawBox::<NumBox>::new(&[Color::Black, Color::Black], &mult, &[2, 1]);
+        let one_id = BoxId::<NumBox>::new(register_box(
+            raw_one.kind(),
+            raw_one.hash(&random_state),
+            raw_one.cast(),
+        ));
+
+        let raw_neg_one = RawBox::<NumBox>::new(&[Color::Black, Color::Red], &mult, &[2, 1]);
+        let neg_one_id = BoxId::<NumBox>::new(register_box(
+            raw_neg_one.kind(),
+            raw_neg_one.hash(&random_state),
+            raw_neg_one.cast(),
+        ));
+
+        let raw_anti_one = RawBox::<NumBox>::new(&[Color::Red, Color::Black], &mult, &[2, 1]);
+        let anti_one_id = BoxId::<NumBox>::new(register_box(
+            raw_anti_one.kind(),
+            raw_anti_one.hash(&random_state),
+            raw_anti_one.cast(),
+        ));
+
+        let raw_anti_neg_one = RawBox::<NumBox>::new(&[Color::Red, Color::Red], &mult, &[2, 1]);
+        let anti_neg_one_id = BoxId::<NumBox>::new(register_box(
+            raw_anti_neg_one.kind(),
+            raw_anti_neg_one.hash(&random_state),
+            raw_anti_neg_one.cast(),
+        ));
+
+        let mult = [
+            Natural::from(1_u32),
+            Natural::from(1_u32),
+            Natural::from(1_u32),
+        ];
+        let raw_alpha = RawBox::<PolynumBox>::new(
+            &[Color::Black, Color::Black, Color::Black],
+            &mult,
+            &[3, 2, 1],
         );
-        let zero = zero.as_ref();
-        let kind = zero.kind();
-        let hash = zero.hash(&random_state);
-        register_box(Self::ZERO.into_any(), zero.cast(), kind, hash);
+        let alpha_id = BoxId::<PolynumBox>::new(register_box(
+            raw_alpha.kind(),
+            raw_alpha.hash(&random_state),
+            raw_alpha.cast(),
+        ));
 
-        let anti_zero =
-            RawBoxOwned::<NumBox>::new_with(vec![Color::Red], vec![Natural::from(1_u32)], vec![1]);
-        let anti_zero = anti_zero.as_ref();
-        let kind = anti_zero.kind();
-        let hash = anti_zero.hash(&random_state);
-        register_box(Self::ANTI_ZERO.into_any(), anti_zero.cast(), kind, hash);
+        let raw_neg_alpha =
+            RawBox::<PolynumBox>::new(&[Color::Black, Color::Red, Color::Black], &mult, &[3, 2, 1]);
+        let neg_alpha_id = BoxId::<PolynumBox>::new(register_box(
+            raw_neg_alpha.kind(),
+            raw_neg_alpha.hash(&random_state),
+            raw_neg_alpha.cast(),
+        ));
 
-        let one = RawBoxOwned::<NumBox>::new_with(
-            vec![Color::Black, Color::Black],
-            vec![Natural::from(1_u32), Natural::from(1_u32)],
-            vec![2, 1],
-        );
-        let one = one.as_ref();
-        let kind = one.kind();
-        let hash = one.hash(&random_state);
-        register_box(Self::ONE.into_any(), one.cast(), kind, hash);
+        let raw_anti_alpha =
+            RawBox::<PolynumBox>::new(&[Color::Red, Color::Black, Color::Black], &mult, &[3, 2, 1]);
+        let anti_alpha_id = BoxId::<PolynumBox>::new(register_box(
+            raw_anti_alpha.kind(),
+            raw_anti_alpha.hash(&random_state),
+            raw_anti_alpha.cast(),
+        ));
 
-        let anti_one = RawBoxOwned::<NumBox>::new_with(
-            vec![Color::Red, Color::Black],
-            vec![Natural::from(1_u32), Natural::from(1_u32)],
-            vec![2, 1],
-        );
-        let anti_one = anti_one.as_ref();
-        let kind = anti_one.kind();
-        let hash = anti_one.hash(&random_state);
-        register_box(Self::ANTI_ONE.into_any(), anti_one.cast(), kind, hash);
+        let raw_anti_neg_alpha =
+            RawBox::<PolynumBox>::new(&[Color::Red, Color::Red, Color::Black], &mult, &[3, 2, 1]);
+        let anti_neg_alpha_id = BoxId::<PolynumBox>::new(register_box(
+            raw_anti_neg_alpha.kind(),
+            raw_anti_neg_alpha.hash(&random_state),
+            raw_anti_neg_alpha.cast(),
+        ));
 
-        let neg_one = RawBoxOwned::<NumBox>::new_with(
-            vec![Color::Black, Color::Red],
-            vec![Natural::from(1_u32), Natural::from(1_u32)],
-            vec![2, 1],
-        );
-        let neg_one = neg_one.as_ref();
-        let kind = neg_one.kind();
-        let hash = neg_one.hash(&random_state);
-        register_box(Self::NEG_ONE.into_any(), neg_one.cast(), kind, hash);
-
-        let anti_neg_one = RawBoxOwned::<NumBox>::new_with(
-            vec![Color::Red, Color::Red],
-            vec![Natural::from(1_u32), Natural::from(1_u32)],
-            vec![2, 1],
-        );
-        let anti_neg_one = anti_neg_one.as_ref();
-        let kind = anti_neg_one.kind();
-        let hash = anti_neg_one.hash(&random_state);
-        register_box(
-            Self::ANTI_NEG_ONE.into_any(),
-            anti_neg_one.cast(),
-            kind,
-            hash,
-        );
-
-        let alpha = RawBoxOwned::<PolynumBox>::new_with(
-            vec![Color::Black, Color::Black, Color::Black],
-            vec![
-                Natural::from(1_u32),
-                Natural::from(1_u32),
-                Natural::from(1_u32),
-            ],
-            vec![3, 2, 1],
-        );
-        let alpha = alpha.as_ref();
-        let kind = alpha.kind();
-        let hash = alpha.hash(&random_state);
-        register_box(Self::ALPHA.into_any(), alpha.cast(), kind, hash);
-
-        let anti_alpha = RawBoxOwned::<PolynumBox>::new_with(
-            vec![Color::Red, Color::Black, Color::Black],
-            vec![
-                Natural::from(1_u32),
-                Natural::from(1_u32),
-                Natural::from(1_u32),
-            ],
-            vec![3, 2, 1],
-        );
-        let anti_alpha = anti_alpha.as_ref();
-        let kind = anti_alpha.kind();
-        let hash = anti_alpha.hash(&random_state);
-        register_box(Self::ANTI_ALPHA.into_any(), anti_alpha.cast(), kind, hash);
-
-        let neg_alpha = RawBoxOwned::<PolynumBox>::new_with(
-            vec![Color::Black, Color::Red, Color::Black],
-            vec![
-                Natural::from(1_u32),
-                Natural::from(1_u32),
-                Natural::from(1_u32),
-            ],
-            vec![3, 2, 1],
-        );
-        let neg_alpha = neg_alpha.as_ref();
-        let kind = neg_alpha.kind();
-        let hash = neg_alpha.hash(&random_state);
-        register_box(Self::NEG_ALPHA.into_any(), neg_alpha.cast(), kind, hash);
+        let constants = BoxConstants {
+            zero: zero_id,
+            anti_zero: anti_zero_id,
+            one: one_id,
+            anti_one: anti_one_id,
+            alpha: alpha_id,
+            neg_alpha: neg_alpha_id,
+            anti_alpha: anti_alpha_id,
+            anti_neg_alpha: anti_neg_alpha_id,
+            neg_one: neg_one_id,
+            anti_neg_one: anti_neg_one_id,
+        };
 
         Self {
             kinds,
@@ -644,6 +638,7 @@ impl BoxArena {
             active_expressions,
             cache,
             random_state,
+            constants,
         }
     }
 
@@ -651,6 +646,47 @@ impl BoxArena {
     #[inline(always)]
     fn next_id<T: BoxType>(&self) -> BoxId<T> {
         BoxId::new(self.colors.len() as u32)
+    }
+
+    /// Getters for predefined constants
+    pub fn zero(&self) -> BoxId<NumBox> {
+        self.constants.zero
+    }
+
+    pub fn anti_zero(&self) -> BoxId<NumBox> {
+        self.constants.anti_zero
+    }
+
+    pub fn one(&self) -> BoxId<NumBox> {
+        self.constants.one
+    }
+
+    pub fn neg_one(&self) -> BoxId<NumBox> {
+        self.constants.neg_one
+    }
+
+    pub fn anti_one(&self) -> BoxId<NumBox> {
+        self.constants.anti_one
+    }
+
+    pub fn anti_neg_one(&self) -> BoxId<NumBox> {
+        self.constants.anti_neg_one
+    }
+
+    pub fn alpha(&self) -> BoxId<PolynumBox> {
+        self.constants.alpha
+    }
+
+    pub fn neg_alpha(&self) -> BoxId<PolynumBox> {
+        self.constants.neg_alpha
+    }
+
+    pub fn anti_alpha(&self) -> BoxId<PolynumBox> {
+        self.constants.anti_alpha
+    }
+
+    pub fn anti_neg_alpha(&self) -> BoxId<PolynumBox> {
+        self.constants.anti_neg_alpha
     }
 
     /// Gets the raw data of a box given by its id
@@ -726,42 +762,34 @@ impl BoxArena {
     }
 
     pub fn from_u32(&mut self, num: u32) -> BoxId<NumBox> {
-        self.wrap_in_box(BoxArena::ZERO, Color::Black, Natural::from(num))
+        self.wrap_in_box(self.zero(), Color::Black, Natural::from(num))
     }
 
     pub fn from_u64(&mut self, num: u64) -> BoxId<NumBox> {
-        self.wrap_in_box(BoxArena::ZERO, Color::Black, Natural::from(num))
+        self.wrap_in_box(self.zero(), Color::Black, Natural::from(num))
     }
 
     pub fn from_i32(&mut self, num: i32) -> BoxId<NumBox> {
         if num < 0 {
             self.wrap_in_box(
-                BoxArena::ANTI_ZERO,
+                self.anti_zero(),
                 Color::Black,
                 Natural::from(num.unsigned_abs()),
             )
         } else {
-            self.wrap_in_box(
-                BoxArena::ZERO,
-                Color::Black,
-                Natural::from(num.unsigned_abs()),
-            )
+            self.wrap_in_box(self.zero(), Color::Black, Natural::from(num.unsigned_abs()))
         }
     }
 
     pub fn from_i64(&mut self, num: i64) -> BoxId<NumBox> {
         if num < 0 {
             self.wrap_in_box(
-                BoxArena::ANTI_ZERO,
+                self.anti_zero(),
                 Color::Black,
                 Natural::from(num.unsigned_abs()),
             )
         } else {
-            self.wrap_in_box(
-                BoxArena::ZERO,
-                Color::Black,
-                Natural::from(num.unsigned_abs()),
-            )
+            self.wrap_in_box(self.zero(), Color::Black, Natural::from(num.unsigned_abs()))
         }
     }
 
@@ -1095,53 +1123,12 @@ impl BoxArena {
         let kind = self.kinds.get(index as usize)?;
 
         if *kind == T::KIND {
-            // Safe to cast because the serialized manifest verified the variant matches!
             Some(BoxId::<T>::new(index))
         } else {
-            None // Prevents type pollution if the file data mismatches
+            None
         }
     }
 }
-
-// struct BoxBuilder {
-//     /// Box colors
-//     pub colors: Vec<Color>,
-//     /// Number of child nodes
-//     pub arities: Vec<u32>,
-//     /// Multiplicity of the node itself
-//     pub multiplicities: Vec<u64>,
-//     /// Number of flat nodes occupied by this subtree
-//     pub lengths: Vec<u32>,
-//     /// Pointers to the starting indices of active expressions
-//     pub active_expressions: Vec<BoxId>,
-//     /// Global box cache
-//     pub cache: RapidHashMap<u64, BoxId>,
-//     /// Random state for hasher
-//     pub random_state: RandomState,
-// }
-//
-// impl BoxBuilder {
-//     /// Create a raw view window over a temporary expression in the scratch space
-//     pub fn as_raw_box(&self, scratch_idx: usize) -> RawBox<'_> {
-//         let len = self.lengths[scratch_idx] as usize;
-//         let range = scratch_idx..(scratch_idx + len);
-//
-//         RawBox {
-//             colors: &self.colors[range.clone()],
-//             arities: &self.arities[range.clone()],
-//             multiplicities: &self.multiplicities[range.clone()],
-//             lengths: &self.lengths[range],
-//         }
-//     }
-// }
-
-// impl<'a> std::ops::Mul<BoxId> for BoxMut<'a> {
-//     type Output = BoxId;
-//
-//     fn mul(self, rhs: BoxId) -> Self::Output {
-//         self.arena.wrap_in_box(self.id, Color::Black, rhs.0 as u64)
-//     }
-// }
 
 #[cfg(test)]
 mod tests {
@@ -1150,23 +1137,23 @@ mod tests {
     #[test]
     fn test_add() {
         let mut arena = BoxArena::new();
-        let zero = BoxArena::ZERO;
+        let zero = arena.zero();
 
-        let two = arena.add(BoxArena::ONE, BoxArena::ONE);
+        let two = arena.add(arena.one(), arena.one());
         let expected = arena.wrap_in_box(zero, Color::Black, Natural::from(2_u32));
         assert_eq!(two, expected);
 
-        let minus_two = arena.add(BoxArena::NEG_ONE, BoxArena::NEG_ONE);
-        let expected = arena.wrap_in_box(BoxArena::ANTI_ZERO, Color::Black, Natural::from(2_u32));
+        let minus_two = arena.add(arena.neg_one(), arena.neg_one());
+        let expected = arena.wrap_in_box(arena.anti_zero(), Color::Black, Natural::from(2_u32));
         assert_eq!(minus_two, expected);
 
         let minus_one = arena.wrap_in_box::<NumBox, NumBox>(
-            BoxArena::ANTI_ZERO,
+            arena.anti_zero(),
             Color::Black,
             Natural::from(1_u32),
         );
-        let zero = arena.add(minus_one, BoxArena::ONE);
-        assert_eq!(zero, BoxArena::ZERO);
+        let zero = arena.add(minus_one, arena.one());
+        assert_eq!(zero, arena.zero());
 
         let two = arena.from_u32(2);
         let three = arena.from_u32(3);
@@ -1180,10 +1167,10 @@ mod tests {
         let expected = arena.from_u32(1);
         assert_eq!(one, expected);
 
-        let alpha = BoxArena::ALPHA;
+        let alpha = arena.alpha();
         let two_alpha = arena.add(alpha, alpha);
         let expected = arena.wrap_in_box::<NumBox, PolynumBox>(
-            BoxArena::ONE,
+            arena.one(),
             Color::Black,
             Natural::from(2_u32),
         );
@@ -1197,8 +1184,8 @@ mod tests {
         let expected = arena.wrap_in_box(alpha, Color::Black, Natural::from(3_u32));
         assert_eq!(sum, expected);
 
-        let one = BoxArena::ONE;
-        let alpha = BoxArena::ALPHA;
+        let one = arena.one();
+        let alpha = arena.alpha();
         let sum_1 = arena.add(one, alpha);
         let sum_2 = arena.add(alpha, one);
         assert_eq!(sum_1, sum_2);
@@ -1221,18 +1208,19 @@ mod tests {
         let expected = arena.from_i32(-6);
         assert_eq!(m_six, expected);
 
-        let alpha = BoxArena::ALPHA;
+        let alpha = arena.alpha();
         let alpha_2 = arena.mul(alpha, alpha);
+        let two = arena.from_u32(2);
         let expected = arena.wrap_in_box(two, Color::Black, Natural::from(1_u32));
         assert_eq!(alpha_2, expected);
 
-        let one = BoxArena::ONE;
-        let alpha = BoxArena::ALPHA;
+        let one = arena.one();
+        let alpha = arena.alpha();
         let p1 = arena.add(one, alpha);
-        let p2 = arena.add(one, BoxArena::NEG_ALPHA);
+        let p2 = arena.add(one, arena.neg_alpha());
         let prod = arena.mul(p1, p2);
         let anti_two =
-            arena.wrap_in_box::<NumBox, NumBox>(BoxArena::ZERO, Color::Red, Natural::from(2_u32));
+            arena.wrap_in_box::<NumBox, NumBox>(arena.zero(), Color::Red, Natural::from(2_u32));
         let neg_alpha_2 =
             arena.wrap_in_box::<NumBox, PolynumBox>(anti_two, Color::Black, Natural::from(1_u32));
         let expected = arena.add(one, neg_alpha_2);
@@ -1242,7 +1230,7 @@ mod tests {
     #[test]
     fn test_pixel() {
         let mut arena = BoxArena::new();
-        let one = BoxArena::ONE;
+        let one = arena.one();
         let two = arena.from_u32(2);
         let three = arena.from_u32(3);
         let p1 = arena.pixel(one, two);
