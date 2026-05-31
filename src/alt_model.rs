@@ -410,15 +410,6 @@ impl<T: BoxType> RawBoxOwned<T> {
         }
     }
 
-    pub fn new_with(colors: Vec<Color>, multiplicities: Vec<Natural>, lengths: Vec<u32>) -> Self {
-        Self {
-            colors,
-            multiplicities,
-            lengths,
-            _marker: PhantomData,
-        }
-    }
-
     pub fn as_ref(&self) -> RawBox<'_, T> {
         RawBox::new(&self.colors, &self.multiplicities, &self.lengths)
     }
