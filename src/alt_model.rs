@@ -25,7 +25,7 @@ pub enum BoxKind {
 }
 
 /// Trait that describes the type of a box
-pub trait BoxType: Sized {
+pub trait BoxType: Sized + Clone {
     const KIND: BoxKind;
 
     /// Validates whether a raw uncommitted slice layout fits the structural constraints
@@ -41,7 +41,7 @@ pub trait Num: BoxType {}
 pub trait Polynum: Num {}
 pub trait Multinum: Polynum {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AnyBox;
 impl BoxType for AnyBox {
     const KIND: BoxKind = BoxKind::Box;
@@ -51,7 +51,7 @@ impl BoxType for AnyBox {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NumBox;
 impl BoxType for NumBox {
     const KIND: BoxKind = BoxKind::Num;
@@ -62,7 +62,7 @@ impl BoxType for NumBox {
 }
 impl Num for NumBox {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PolynumBox;
 impl BoxType for PolynumBox {
     const KIND: BoxKind = BoxKind::Polynum;
@@ -74,7 +74,7 @@ impl BoxType for PolynumBox {
 impl Num for PolynumBox {}
 impl Polynum for PolynumBox {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MultinumBox;
 impl BoxType for MultinumBox {
     const KIND: BoxKind = BoxKind::Multinum;
@@ -87,6 +87,7 @@ impl Num for MultinumBox {}
 impl Polynum for MultinumBox {}
 impl Multinum for MultinumBox {}
 
+#[derive(Debug, Clone)]
 pub struct PixelBox;
 impl BoxType for PixelBox {
     const KIND: BoxKind = BoxKind::Pixel;
@@ -100,6 +101,7 @@ impl BoxType for PixelBox {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct MaxelBox;
 impl BoxType for MaxelBox {
     const KIND: BoxKind = BoxKind::Maxel;
@@ -198,7 +200,7 @@ impl<T: BoxType> BoxId<T> {
 }
 
 /// Raw uncomitted box data
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RawBox<'a, T: BoxType> {
     pub colors: &'a [Color],
     pub multiplicities: &'a [Natural],
@@ -696,11 +698,11 @@ impl BoxArena {
         let hash = raw.hash(&self.random_state);
 
         // cache hit
-        if let Some(&existing_id) = self.cache.get(&hash) {
-            return BoxId::<T>::new(existing_id.index());
+        if let Some(&box_id) = self.cache.get(&hash) {
+            return BoxId::<T>::new(box_id.index());
         }
 
-        // cache miss
+        // cache miss - commit to arena
         let new_id = self.next_id();
         self.kinds.push(T::KIND);
         self.cache.insert(hash, new_id);
@@ -720,7 +722,6 @@ impl BoxArena {
     }
 
     /// Wraps an existing expression in a new box container
-    /// ToDo: infer return type from source
     pub fn wrap_in_box<T: BoxType, U: BoxType>(
         &mut self,
         source: BoxId<T>,
@@ -1053,37 +1054,12 @@ impl BoxArena {
         self.commit_sorted(raw)
     }
 
-    /// Instantiates a pixel
-    pub fn pixel<T: BoxType>(&mut self, x: BoxId<T>, y: BoxId<T>) -> BoxId<T> {
-        let x_raw = self.get_raw(x);
-        let x_len = x_raw.length();
-
-        let y_raw = self.get_raw(y);
-        let y_len = y_raw.length();
-
-        let mut colors = vec![Color::Black];
-        let mut multiplicities = vec![Natural::from(1_u32)];
-        let mut lengths = vec![1 + x_len + y_len];
-
-        // copy source elements
-        colors.extend_from_slice(x_raw.colors);
-        multiplicities.extend_from_slice(x_raw.multiplicities);
-        lengths.extend_from_slice(x_raw.lengths);
-
-        colors.extend_from_slice(y_raw.colors);
-        multiplicities.extend_from_slice(y_raw.multiplicities);
-        lengths.extend_from_slice(y_raw.lengths);
-
-        let raw = RawBox::new(&colors, &multiplicities, &lengths);
-        self.commit(raw)
-    }
-
-    fn pixel_x<T: BoxType>(&mut self, pixel: BoxId<T>) -> BoxId<T> {
+    fn pixel_x(&self, pixel: BoxId<PixelBox>) -> BoxId<AnyBox> {
         let idx = pixel.index();
         BoxId::new(idx + 1)
     }
 
-    fn pixel_y<T: BoxType>(&mut self, pixel: BoxId<T>) -> BoxId<T> {
+    fn pixel_y(&self, pixel: BoxId<PixelBox>) -> BoxId<AnyBox> {
         let idx = pixel.index();
         let idx_x = idx + 1;
         let len_x = self.lengths[idx_x as usize];
@@ -1091,7 +1067,11 @@ impl BoxArena {
     }
 
     /// Multiplies two pixels
-    pub fn mul_pixel<T: BoxType>(&mut self, left: BoxId<T>, right: BoxId<T>) -> Option<BoxId<T>> {
+    pub fn mul_pixel(
+        &mut self,
+        left: BoxId<PixelBox>,
+        right: BoxId<PixelBox>,
+    ) -> Option<BoxId<PixelBox>> {
         let left_y = self.pixel_y(left);
         let right_x = self.pixel_x(right);
 
@@ -1101,11 +1081,246 @@ impl BoxArena {
         if left_y_raw == right_x_raw {
             let left_x = self.pixel_x(left);
             let right_y = self.pixel_y(right);
-            return Some(self.pixel(left_x, right_y));
+            // return Some(self.pixel(left_x, right_y));
         }
 
         None
     }
+
+    pub fn maxel(&mut self) -> BoxId<MaxelBox> {
+        todo!()
+    }
+}
+
+pub enum BoxView<'a, T: BoxType> {
+    Id(BoxId<T>, &'a BoxArena),
+    Transient(RawBox<'a, T>),
+}
+
+impl<'a, T: BoxType> BoxView<'a, T> {
+    pub fn as_raw(&self) -> RawBox<'a, T> {
+        match self {
+            BoxView::Id(id, arena) => arena.get_raw(*id),
+            BoxView::Transient(raw) => raw.clone(),
+        }
+    }
+}
+
+/// Workspace for building boxes with reusable scratch space to minimize heap allocations
+pub struct BoxBuilder {
+    pub colors: Vec<Color>,
+    pub multiplicities: Vec<Natural>,
+    pub lengths: Vec<u32>,
+    pub scratch_x: Vec<Natural>,
+    pub scratch_y: Vec<Natural>,
+}
+
+impl BoxBuilder {
+    pub fn new() -> Self {
+        Self {
+            colors: Vec::with_capacity(64),
+            multiplicities: Vec::with_capacity(64),
+            lengths: Vec::with_capacity(64),
+            scratch_x: Vec::with_capacity(4),
+            scratch_y: Vec::with_capacity(4),
+        }
+    }
+
+    #[inline]
+    pub fn reset(&mut self) {
+        self.colors.clear();
+        self.multiplicities.clear();
+        self.lengths.clear();
+        self.scratch_x.clear();
+        self.scratch_y.clear();
+    }
+
+    pub fn add_boxes<'a, T: BoxType>(
+        &mut self,
+        left: BoxView<'a, T>,
+        right: BoxView<'a, T>,
+    ) -> RawBox<'_, T> {
+        todo!()
+        // let mut arena = BoxArena::new();
+        // let mut workspace = BoxBuilder::new();
+
+        // let a = BoxView::Id(arena.constants.a, &arena);
+        // let b = BoxView::Id(arena.constants.b, &arena);
+        // let c = BoxView::Id(arena.constants.c, &arena);
+
+        // let tmp_sum = workspace.add_boxes(a, b);
+
+        // let final_raw_product = workspace.mul_boxes(BoxView::Transient(tmp_sum), c);
+
+        // let result_id = arena.commit(final_raw_product);
+    }
+}
+
+impl Default for BoxBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BoxBuilder {
+    pub fn mul_pixel(
+        &mut self,
+        arena: &BoxArena,
+        left: BoxId<PixelBox>,
+        right: BoxId<PixelBox>,
+    ) -> Option<RawBox<'_, PixelBox>> {
+        let left_y = arena.pixel_y(left);
+        let right_x = arena.pixel_x(right);
+
+        let left_y_raw = arena.get_raw(left_y);
+        let right_x_raw = arena.get_raw(right_x);
+
+        if left_y_raw == right_x_raw {
+            let left_x = arena.pixel_x(left);
+            let right_y = arena.pixel_y(right);
+            let builder = PixelBuilder::new(arena, self);
+            return Some(builder.build_pixel(left_x, right_y));
+        }
+
+        None
+    }
+}
+
+pub enum BoxInput<'a, T: BoxType> {
+    /// A permanent box that has been committed to the arena
+    Committed(BoxId<T>),
+    /// An uncommitted box view
+    Transient(RawBox<'a, T>),
+}
+
+pub struct PixelBuilder<'a, 'b> {
+    arena: &'a BoxArena,
+    workspace: &'b mut BoxBuilder,
+}
+
+impl<'a, 'b> PixelBuilder<'a, 'b> {
+    pub fn new(arena: &'a BoxArena, workspace: &'b mut BoxBuilder) -> Self {
+        workspace.reset();
+        Self { arena, workspace }
+    }
+
+    pub fn build_pixel<X, Y>(self, x: X, y: Y) -> RawBox<'b, PixelBox>
+    where
+        X: IntoRawBox,
+        Y: IntoRawBox,
+    {
+        let x_raw = x.into_raw_box(self.arena, &mut self.workspace.scratch_x);
+        let y_raw = y.into_raw_box(self.arena, &mut self.workspace.scratch_y);
+
+        self.workspace.colors.push(Color::Black);
+        self.workspace.multiplicities.push(Natural::from(1_u32));
+        self.workspace
+            .lengths
+            .push(1 + x_raw.lengths.len() as u32 + y_raw.lengths.len() as u32);
+
+        self.workspace.colors.extend_from_slice(x_raw.colors);
+        self.workspace
+            .multiplicities
+            .extend_from_slice(x_raw.multiplicities);
+        self.workspace.lengths.extend_from_slice(x_raw.lengths);
+
+        self.workspace.colors.extend_from_slice(y_raw.colors);
+        self.workspace
+            .multiplicities
+            .extend_from_slice(y_raw.multiplicities);
+        self.workspace.lengths.extend_from_slice(y_raw.lengths);
+
+        RawBox::new(
+            &self.workspace.colors,
+            &self.workspace.multiplicities,
+            &self.workspace.lengths,
+        )
+    }
+}
+
+pub trait IntoRawBox {
+    type Target: BoxType;
+
+    /// Returns a raw view of the value without committing to the arena, for use in constructing new boxes
+    fn into_raw_box<'a>(
+        self,
+        arena: &'a BoxArena,
+        scratch: &'a mut Vec<Natural>,
+    ) -> RawBox<'a, Self::Target>;
+}
+
+impl<T: BoxType> IntoRawBox for BoxId<T> {
+    type Target = T;
+
+    #[inline]
+    fn into_raw_box<'a>(
+        self,
+        arena: &'a BoxArena,
+        _scratch: &'a mut Vec<Natural>,
+    ) -> RawBox<'a, Self::Target> {
+        arena.get_raw(self)
+    }
+}
+
+impl IntoRawBox for u32 {
+    type Target = NumBox;
+
+    #[inline]
+    fn into_raw_box<'a>(
+        self,
+        _arena: &'a BoxArena,
+        scratch: &'a mut Vec<Natural>,
+    ) -> RawBox<'a, Self::Target> {
+        scratch.push(Natural::from(1_u32));
+        scratch.push(Natural::from(self));
+        RawBox::<NumBox>::new(&[Color::Black, Color::Black], scratch, &[2, 1])
+    }
+}
+
+pub trait IntoBox {
+    type Target: BoxType;
+
+    /// Convert or pass through the value into a box of the target type, committing to the arena if necessary
+    fn into_box(self, arena: &mut BoxArena) -> BoxId<Self::Target>;
+}
+
+impl<T: BoxType> IntoBox for BoxId<T> {
+    type Target = T;
+
+    #[inline]
+    fn into_box(self, _arena: &mut BoxArena) -> BoxId<Self::Target> {
+        self
+    }
+}
+
+impl IntoBox for u32 {
+    type Target = NumBox;
+
+    #[inline]
+    fn into_box(self, arena: &mut BoxArena) -> BoxId<Self::Target> {
+        arena.from_u32(self)
+    }
+}
+
+#[macro_export]
+macro_rules! pixel_alt {
+    ($arena:expr, $x:expr, $y:expr) => {
+        $arena::pixel($x, $y)
+    };
+}
+
+#[macro_export]
+macro_rules! maxel_alt {
+    ($arena:ident, $([$x:expr, $y:expr]),* $(,)?) => {
+        {
+            let mut outer_box = $crate::MBox::new();
+            $(
+                let pix = $arena::pixel(($x).into(), ($y).into());
+                outer_box.insert_box(pix);
+            )*
+            outer_box
+        }
+    };
 }
 
 impl BoxArena {
@@ -1221,16 +1436,26 @@ mod tests {
     #[test]
     fn test_pixel() {
         let mut arena = BoxArena::new();
+        let mut workspace = BoxBuilder::new();
+
         let one = arena.one();
         let two = arena.from_u32(2);
         let three = arena.from_u32(3);
-        let p1 = arena.pixel(one, two);
-        let p2 = arena.pixel(two, three);
-        let p3 = arena.mul_pixel(p1, p2);
-        let p4 = arena.pixel(three, two);
-        let expected = Some(arena.pixel(one, three));
-        assert_eq!(p3, expected);
 
+        let raw_p1 = PixelBuilder::new(&arena, &mut workspace).build_pixel(one, two);
+        let p1 = arena.commit(raw_p1);
+
+        let raw_p2 = PixelBuilder::new(&arena, &mut workspace).build_pixel(two, three);
+        let p2 = arena.commit(raw_p2);
+
+        let p3 = arena.mul_pixel(p1, p2);
+        let raw_expected = PixelBuilder::new(&arena, &mut workspace).build_pixel(one, three);
+        let expected = arena.commit(raw_expected);
+
+        assert_eq!(p3, Some(expected));
+
+        let raw_p4 = PixelBuilder::new(&arena, &mut workspace).build_pixel(three, two);
+        let p4 = arena.commit(raw_p4);
         let p5 = arena.mul_pixel(p1, p4);
         assert!(p5.is_none());
     }
