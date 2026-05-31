@@ -41,7 +41,7 @@ pub trait Num: BoxType {}
 pub trait Polynum: Num {}
 pub trait Multinum: Polynum {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct AnyBox;
 impl BoxType for AnyBox {
     const KIND: BoxKind = BoxKind::Box;
@@ -51,7 +51,7 @@ impl BoxType for AnyBox {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct NumBox;
 impl BoxType for NumBox {
     const KIND: BoxKind = BoxKind::Num;
@@ -62,7 +62,7 @@ impl BoxType for NumBox {
 }
 impl Num for NumBox {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PolynumBox;
 impl BoxType for PolynumBox {
     const KIND: BoxKind = BoxKind::Polynum;
@@ -74,7 +74,7 @@ impl BoxType for PolynumBox {
 impl Num for PolynumBox {}
 impl Polynum for PolynumBox {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct MultinumBox;
 impl BoxType for MultinumBox {
     const KIND: BoxKind = BoxKind::Multinum;
@@ -87,7 +87,7 @@ impl Num for MultinumBox {}
 impl Polynum for MultinumBox {}
 impl Multinum for MultinumBox {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PixelBox;
 impl BoxType for PixelBox {
     const KIND: BoxKind = BoxKind::Pixel;
@@ -101,7 +101,7 @@ impl BoxType for PixelBox {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct MaxelBox;
 impl BoxType for MaxelBox {
     const KIND: BoxKind = BoxKind::Maxel;
@@ -160,8 +160,8 @@ impl_box_mul!(NumBox, MultinumBox => MultinumBox);
 impl_box_mul!(PolynumBox, MultinumBox => MultinumBox);
 
 #[derive(Debug)]
-#[repr(transparent)]
 pub struct BoxId<T: BoxType> {
+    store_id: u32,
     index: u32,
     _marker: std::marker::PhantomData<T>,
 }
@@ -181,11 +181,17 @@ impl<T: BoxType> Eq for BoxId<T> {}
 
 impl<T: BoxType> BoxId<T> {
     #[inline(always)]
-    pub const fn new(index: u32) -> Self {
+    pub const fn new(store_id: u32, index: u32) -> Self {
         Self {
+            store_id,
             index,
             _marker: PhantomData,
         }
+    }
+
+    #[inline(always)]
+    pub fn store_id(self) -> u32 {
+        self.store_id
     }
 
     #[inline(always)]
@@ -195,7 +201,7 @@ impl<T: BoxType> BoxId<T> {
 
     #[inline(always)]
     pub fn into_any(self) -> BoxId<AnyBox> {
-        BoxId::new(self.index)
+        BoxId::new(self.store_id, self.index())
     }
 }
 
@@ -458,6 +464,17 @@ impl Mul<Color> for Color {
     }
 }
 
+pub struct ScratchRegistry<'a> {
+    stores: Vec<&'a BoxStore>,
+}
+
+impl<'a> ScratchRegistry<'a> {
+    pub fn get_raw<T: BoxType>(&self, id: BoxId<T>) -> RawBox<'a, T> {
+        let target_store = self.stores[id.store_id as usize];
+        target_store.get_raw(id)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BoxConstants {
     pub zero: BoxId<NumBox>,
@@ -472,9 +489,11 @@ pub struct BoxConstants {
     pub anti_neg_alpha: BoxId<PolynumBox>,
 }
 
-/// Global arena for box computations
+/// Global store for box computations
 #[derive(Debug)]
-pub struct BoxArena {
+pub struct BoxStore {
+    /// ID of this store
+    pub store_id: u32,
     /// Box colors
     pub colors: Vec<Color>,
     /// Multiplicities of boxes
@@ -484,7 +503,7 @@ pub struct BoxArena {
     /// Kinds of boxes
     pub kinds: Vec<BoxKind>,
     /// Pointers to starting indices of active boxes
-    pub active_expressions: Vec<BoxId<AnyBox>>,
+    pub active_boxes: Vec<BoxId<AnyBox>>,
     /// Global box cache
     pub cache: RapidHashMap<u64, BoxId<AnyBox>>,
     /// Random state for hasher
@@ -493,29 +512,29 @@ pub struct BoxArena {
     pub constants: BoxConstants,
 }
 
-impl Default for BoxArena {
+impl Default for BoxStore {
     fn default() -> Self {
-        Self::new()
+        Self::new(0)
     }
 }
 
-const ARENA_INIT_CAPACITY: usize = 32;
-impl BoxArena {
-    /// Initializes the arena with elementary objects
-    pub fn new() -> Self {
+const BOX_STORE_CAPACITY: usize = 32;
+impl BoxStore {
+    /// Initializes the store with elementary boxes
+    pub fn new(store_id: u32) -> Self {
         let random_state = RandomState::new();
 
-        let active_expressions = Vec::with_capacity(ARENA_INIT_CAPACITY);
+        let active_boxes = Vec::with_capacity(BOX_STORE_CAPACITY);
         let mut cache = RapidHashMap::new();
 
-        let mut kinds = Vec::with_capacity(ARENA_INIT_CAPACITY);
-        let mut colors = Vec::with_capacity(ARENA_INIT_CAPACITY);
-        let mut multiplicities = Vec::with_capacity(ARENA_INIT_CAPACITY);
-        let mut lengths = Vec::with_capacity(ARENA_INIT_CAPACITY);
+        let mut kinds = Vec::with_capacity(BOX_STORE_CAPACITY);
+        let mut colors = Vec::with_capacity(BOX_STORE_CAPACITY);
+        let mut multiplicities = Vec::with_capacity(BOX_STORE_CAPACITY);
+        let mut lengths = Vec::with_capacity(BOX_STORE_CAPACITY);
 
         let mut register_box = |kind: BoxKind, hash: u64, raw_box: RawBox<'_, AnyBox>| {
             let index = lengths.len() as u32;
-            let id = BoxId::<AnyBox>::new(index);
+            let id = BoxId::<AnyBox>::new(store_id, index);
             // Commit data
             cache.insert(hash, id);
             kinds.push(kind);
@@ -528,47 +547,61 @@ impl BoxArena {
 
         let mult = [Natural::from(1_u32)];
         let raw_zero = RawBox::<NumBox>::new(&[Color::Black], &mult, &[1]);
-        let zero_id = BoxId::<NumBox>::new(register_box(
-            raw_zero.kind(),
-            raw_zero.hash(&random_state),
-            raw_zero.cast(),
-        ));
+        let zero_id = BoxId::<NumBox>::new(
+            store_id,
+            register_box(
+                raw_zero.kind(),
+                raw_zero.hash(&random_state),
+                raw_zero.cast(),
+            ),
+        );
 
         let raw_anti_zero = RawBox::<NumBox>::new(&[Color::Red], &mult, &[1]);
-        let anti_zero_id = BoxId::<NumBox>::new(register_box(
-            raw_anti_zero.kind(),
-            raw_anti_zero.hash(&random_state),
-            raw_anti_zero.cast(),
-        ));
+        let anti_zero_id = BoxId::<NumBox>::new(
+            store_id,
+            register_box(
+                raw_anti_zero.kind(),
+                raw_anti_zero.hash(&random_state),
+                raw_anti_zero.cast(),
+            ),
+        );
 
         let mult = [Natural::from(1_u32), Natural::from(1_u32)];
         let raw_one = RawBox::<NumBox>::new(&[Color::Black, Color::Black], &mult, &[2, 1]);
-        let one_id = BoxId::<NumBox>::new(register_box(
-            raw_one.kind(),
-            raw_one.hash(&random_state),
-            raw_one.cast(),
-        ));
+        let one_id = BoxId::<NumBox>::new(
+            store_id,
+            register_box(raw_one.kind(), raw_one.hash(&random_state), raw_one.cast()),
+        );
 
         let raw_neg_one = RawBox::<NumBox>::new(&[Color::Black, Color::Red], &mult, &[2, 1]);
-        let neg_one_id = BoxId::<NumBox>::new(register_box(
-            raw_neg_one.kind(),
-            raw_neg_one.hash(&random_state),
-            raw_neg_one.cast(),
-        ));
+        let neg_one_id = BoxId::<NumBox>::new(
+            store_id,
+            register_box(
+                raw_neg_one.kind(),
+                raw_neg_one.hash(&random_state),
+                raw_neg_one.cast(),
+            ),
+        );
 
         let raw_anti_one = RawBox::<NumBox>::new(&[Color::Red, Color::Black], &mult, &[2, 1]);
-        let anti_one_id = BoxId::<NumBox>::new(register_box(
-            raw_anti_one.kind(),
-            raw_anti_one.hash(&random_state),
-            raw_anti_one.cast(),
-        ));
+        let anti_one_id = BoxId::<NumBox>::new(
+            store_id,
+            register_box(
+                raw_anti_one.kind(),
+                raw_anti_one.hash(&random_state),
+                raw_anti_one.cast(),
+            ),
+        );
 
         let raw_anti_neg_one = RawBox::<NumBox>::new(&[Color::Red, Color::Red], &mult, &[2, 1]);
-        let anti_neg_one_id = BoxId::<NumBox>::new(register_box(
-            raw_anti_neg_one.kind(),
-            raw_anti_neg_one.hash(&random_state),
-            raw_anti_neg_one.cast(),
-        ));
+        let anti_neg_one_id = BoxId::<NumBox>::new(
+            store_id,
+            register_box(
+                raw_anti_neg_one.kind(),
+                raw_anti_neg_one.hash(&random_state),
+                raw_anti_neg_one.cast(),
+            ),
+        );
 
         let mult = [
             Natural::from(1_u32),
@@ -580,35 +613,47 @@ impl BoxArena {
             &mult,
             &[3, 2, 1],
         );
-        let alpha_id = BoxId::<PolynumBox>::new(register_box(
-            raw_alpha.kind(),
-            raw_alpha.hash(&random_state),
-            raw_alpha.cast(),
-        ));
+        let alpha_id = BoxId::<PolynumBox>::new(
+            store_id,
+            register_box(
+                raw_alpha.kind(),
+                raw_alpha.hash(&random_state),
+                raw_alpha.cast(),
+            ),
+        );
 
         let raw_neg_alpha =
             RawBox::<PolynumBox>::new(&[Color::Black, Color::Red, Color::Black], &mult, &[3, 2, 1]);
-        let neg_alpha_id = BoxId::<PolynumBox>::new(register_box(
-            raw_neg_alpha.kind(),
-            raw_neg_alpha.hash(&random_state),
-            raw_neg_alpha.cast(),
-        ));
+        let neg_alpha_id = BoxId::<PolynumBox>::new(
+            store_id,
+            register_box(
+                raw_neg_alpha.kind(),
+                raw_neg_alpha.hash(&random_state),
+                raw_neg_alpha.cast(),
+            ),
+        );
 
         let raw_anti_alpha =
             RawBox::<PolynumBox>::new(&[Color::Red, Color::Black, Color::Black], &mult, &[3, 2, 1]);
-        let anti_alpha_id = BoxId::<PolynumBox>::new(register_box(
-            raw_anti_alpha.kind(),
-            raw_anti_alpha.hash(&random_state),
-            raw_anti_alpha.cast(),
-        ));
+        let anti_alpha_id = BoxId::<PolynumBox>::new(
+            store_id,
+            register_box(
+                raw_anti_alpha.kind(),
+                raw_anti_alpha.hash(&random_state),
+                raw_anti_alpha.cast(),
+            ),
+        );
 
         let raw_anti_neg_alpha =
             RawBox::<PolynumBox>::new(&[Color::Red, Color::Red, Color::Black], &mult, &[3, 2, 1]);
-        let anti_neg_alpha_id = BoxId::<PolynumBox>::new(register_box(
-            raw_anti_neg_alpha.kind(),
-            raw_anti_neg_alpha.hash(&random_state),
-            raw_anti_neg_alpha.cast(),
-        ));
+        let anti_neg_alpha_id = BoxId::<PolynumBox>::new(
+            store_id,
+            register_box(
+                raw_anti_neg_alpha.kind(),
+                raw_anti_neg_alpha.hash(&random_state),
+                raw_anti_neg_alpha.cast(),
+            ),
+        );
 
         let constants = BoxConstants {
             zero: zero_id,
@@ -624,11 +669,12 @@ impl BoxArena {
         };
 
         Self {
+            store_id,
             kinds,
             colors,
             multiplicities,
             lengths,
-            active_expressions,
+            active_boxes,
             cache,
             random_state,
             constants,
@@ -638,7 +684,7 @@ impl BoxArena {
     /// Returns the next available ID
     #[inline(always)]
     fn next_id<T: BoxType>(&self) -> BoxId<T> {
-        BoxId::new(self.colors.len() as u32)
+        BoxId::new(self.store_id, self.colors.len() as u32)
     }
 
     /// Getters for predefined constants
@@ -693,32 +739,42 @@ impl BoxArena {
         )
     }
 
-    /// Commits a raw, uncommitted box view
+    /// Commits a raw, uncommitted box
     fn commit<T: BoxType>(&mut self, raw: RawBox<'_, T>) -> BoxId<T> {
         let hash = raw.hash(&self.random_state);
 
         // cache hit
         if let Some(&box_id) = self.cache.get(&hash) {
-            return BoxId::<T>::new(box_id.index());
+            return BoxId::<T>::new(self.store_id, box_id.index());
         }
 
         // cache miss - commit to arena
         let new_id = self.next_id();
         self.kinds.push(T::KIND);
         self.cache.insert(hash, new_id);
-        self.active_expressions.push(new_id);
+        self.active_boxes.push(new_id);
 
         self.colors.extend_from_slice(raw.colors);
         self.multiplicities.extend_from_slice(raw.multiplicities);
         self.lengths.extend_from_slice(raw.lengths);
 
-        BoxId::<T>::new(new_id.index())
+        BoxId::<T>::new(self.store_id, new_id.index())
     }
 
     /// Sorts the box before commiting it
     fn commit_sorted<T: BoxType>(&mut self, mut raw: RawBoxMut<'_, T>) -> BoxId<T> {
         raw.sort_immediate_children();
         self.commit(RawBox::from(raw))
+    }
+
+    /// Deep-copies a box from a scratch store into this permanent store
+    pub fn commit_from_scratch<T: BoxType>(
+        &mut self,
+        box_id: BoxId<T>,
+        registry: &ScratchRegistry,
+    ) -> BoxId<T> {
+        let raw_box = registry.get_raw(box_id);
+        self.commit(raw_box)
     }
 
     /// Wraps an existing expression in a new box container
@@ -813,7 +869,11 @@ impl BoxArena {
 
         while idx < end {
             count += 1;
-            idx += self.lengths[idx as usize];
+            // idx += self.lengths[idx as usize];
+            let child_len = self.lengths[idx as usize];
+
+            // Advance the pointer past the entire child sub-tree
+            idx += child_len;
         }
         count
     }
@@ -831,7 +891,7 @@ impl BoxArena {
         raw.hash_content(&self.random_state)
     }
 
-    /// Internal helper that does not commit to the arena
+    /// Internal helper that does not commit to the store
     fn add_scratch<L, R>(
         &self,
         lhs: BoxId<L>,
@@ -851,7 +911,7 @@ impl BoxArena {
             let end = start_idx + box_len;
 
             while curr < end {
-                let curr_id = BoxId::new(curr);
+                let curr_id = BoxId::new(self.store_id, curr);
                 let curr_raw = self.get_raw(curr_id);
                 let curr_mul = curr_raw.multiplicity();
                 let curr_col = curr_raw.color();
@@ -885,11 +945,11 @@ impl BoxArena {
             }
         };
 
-        process_child_boxes(lhs.into_any());
-        process_child_boxes(rhs.into_any());
-
         let lhs_col = self.box_color(lhs);
         let rhs_col = self.box_color(rhs);
+
+        process_child_boxes(lhs.into_any());
+        process_child_boxes(rhs.into_any());
 
         scratch_box.colors.push(lhs_col + rhs_col);
         scratch_box.multiplicities.push(Natural::from(1_u32));
@@ -924,7 +984,7 @@ impl BoxArena {
         scratch_box.lengths[0] = (1 + written_len) as u32;
     }
 
-    /// Adds two boxes (unordered)
+    /// Adds two boxes
     pub fn add<L, R>(&mut self, lhs: BoxId<L>, rhs: BoxId<R>) -> BoxId<L::Output>
     where
         L: BoxType + BoxAdd<R>,
@@ -932,8 +992,9 @@ impl BoxArena {
     {
         let mut scratch_box = RawBoxOwned::new();
         self.add_scratch(lhs, rhs, &mut scratch_box);
-        let raw = scratch_box.as_mut();
-        self.commit_sorted(raw)
+        let mut raw = scratch_box.as_mut();
+        raw.sort_immediate_children();
+        self.commit(RawBox::from(raw))
     }
 
     /// Multiplication of boxes
@@ -945,11 +1006,12 @@ impl BoxArena {
         // extract left children
         let mut lhs_children = Vec::new();
         let lhs_start = lhs.index();
+        let lhs_store_id = lhs.store_id();
         let lhs_len = self.box_len(lhs);
         let mut curr = lhs_start + 1;
         let end = lhs_start + lhs_len;
         while curr < end {
-            let child_id = BoxId::<AnyBox>::new(curr);
+            let child_id = BoxId::<AnyBox>::new(lhs_store_id, curr);
             lhs_children.push(child_id);
             curr += self.lengths[curr as usize];
         }
@@ -961,7 +1023,7 @@ impl BoxArena {
         let mut curr = rhs_start + 1;
         let end = rhs_start + rhs_len;
         while curr < end {
-            let child_id = BoxId::<AnyBox>::new(curr);
+            let child_id = BoxId::<AnyBox>::new(rhs.store_id, curr);
             rhs_children.push(child_id);
             curr += self.lengths[curr as usize];
         }
@@ -1054,16 +1116,41 @@ impl BoxArena {
         self.commit_sorted(raw)
     }
 
-    fn pixel_x(&self, pixel: BoxId<PixelBox>) -> BoxId<AnyBox> {
-        let idx = pixel.index();
-        BoxId::new(idx + 1)
+    /// Instantiates a pixel
+    pub fn pixel<T: BoxType>(&mut self, x: BoxId<T>, y: BoxId<T>) -> BoxId<PixelBox> {
+        let x_raw = self.get_raw(x);
+        let x_len = x_raw.length();
+
+        let y_raw = self.get_raw(y);
+        let y_len = y_raw.length();
+
+        let mut colors = vec![Color::Black];
+        let mut multiplicities = vec![Natural::from(1_u32)];
+        let mut lengths = vec![1 + x_len + y_len];
+
+        // copy source elements
+        colors.extend_from_slice(x_raw.colors);
+        multiplicities.extend_from_slice(x_raw.multiplicities);
+        lengths.extend_from_slice(x_raw.lengths);
+
+        colors.extend_from_slice(y_raw.colors);
+        multiplicities.extend_from_slice(y_raw.multiplicities);
+        lengths.extend_from_slice(y_raw.lengths);
+
+        let raw = RawBox::new(&colors, &multiplicities, &lengths);
+        self.commit(raw)
     }
 
-    fn pixel_y(&self, pixel: BoxId<PixelBox>) -> BoxId<AnyBox> {
+    fn pixel_x(&self, pixel: BoxId<PixelBox>) -> BoxId<PixelBox> {
+        let idx = pixel.index();
+        BoxId::new(self.store_id, idx + 1)
+    }
+
+    fn pixel_y(&self, pixel: BoxId<PixelBox>) -> BoxId<PixelBox> {
         let idx = pixel.index();
         let idx_x = idx + 1;
         let len_x = self.lengths[idx_x as usize];
-        BoxId::new(idx_x + len_x)
+        BoxId::new(self.store_id, idx_x + len_x)
     }
 
     /// Multiplies two pixels
@@ -1081,7 +1168,7 @@ impl BoxArena {
         if left_y_raw == right_x_raw {
             let left_x = self.pixel_x(left);
             let right_y = self.pixel_y(right);
-            // return Some(self.pixel(left_x, right_y));
+            return Some(self.pixel(left_x, right_y));
         }
 
         None
@@ -1089,216 +1176,6 @@ impl BoxArena {
 
     pub fn maxel(&mut self) -> BoxId<MaxelBox> {
         todo!()
-    }
-}
-
-pub enum BoxView<'a, T: BoxType> {
-    Id(BoxId<T>, &'a BoxArena),
-    Transient(RawBox<'a, T>),
-}
-
-impl<'a, T: BoxType> BoxView<'a, T> {
-    pub fn as_raw(&self) -> RawBox<'a, T> {
-        match self {
-            BoxView::Id(id, arena) => arena.get_raw(*id),
-            BoxView::Transient(raw) => raw.clone(),
-        }
-    }
-}
-
-/// Workspace for building boxes with reusable scratch space to minimize heap allocations
-pub struct BoxBuilder {
-    pub colors: Vec<Color>,
-    pub multiplicities: Vec<Natural>,
-    pub lengths: Vec<u32>,
-    pub scratch_x: Vec<Natural>,
-    pub scratch_y: Vec<Natural>,
-}
-
-impl BoxBuilder {
-    pub fn new() -> Self {
-        Self {
-            colors: Vec::with_capacity(64),
-            multiplicities: Vec::with_capacity(64),
-            lengths: Vec::with_capacity(64),
-            scratch_x: Vec::with_capacity(4),
-            scratch_y: Vec::with_capacity(4),
-        }
-    }
-
-    #[inline]
-    pub fn reset(&mut self) {
-        self.colors.clear();
-        self.multiplicities.clear();
-        self.lengths.clear();
-        self.scratch_x.clear();
-        self.scratch_y.clear();
-    }
-
-    pub fn add_boxes<'a, T: BoxType>(
-        &mut self,
-        left: BoxView<'a, T>,
-        right: BoxView<'a, T>,
-    ) -> RawBox<'_, T> {
-        todo!()
-        // let mut arena = BoxArena::new();
-        // let mut workspace = BoxBuilder::new();
-
-        // let a = BoxView::Id(arena.constants.a, &arena);
-        // let b = BoxView::Id(arena.constants.b, &arena);
-        // let c = BoxView::Id(arena.constants.c, &arena);
-
-        // let tmp_sum = workspace.add_boxes(a, b);
-
-        // let final_raw_product = workspace.mul_boxes(BoxView::Transient(tmp_sum), c);
-
-        // let result_id = arena.commit(final_raw_product);
-    }
-}
-
-impl Default for BoxBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl BoxBuilder {
-    pub fn mul_pixel(
-        &mut self,
-        arena: &BoxArena,
-        left: BoxId<PixelBox>,
-        right: BoxId<PixelBox>,
-    ) -> Option<RawBox<'_, PixelBox>> {
-        let left_y = arena.pixel_y(left);
-        let right_x = arena.pixel_x(right);
-
-        let left_y_raw = arena.get_raw(left_y);
-        let right_x_raw = arena.get_raw(right_x);
-
-        if left_y_raw == right_x_raw {
-            let left_x = arena.pixel_x(left);
-            let right_y = arena.pixel_y(right);
-            let builder = PixelBuilder::new(arena, self);
-            return Some(builder.build_pixel(left_x, right_y));
-        }
-
-        None
-    }
-}
-
-pub enum BoxInput<'a, T: BoxType> {
-    /// A permanent box that has been committed to the arena
-    Committed(BoxId<T>),
-    /// An uncommitted box view
-    Transient(RawBox<'a, T>),
-}
-
-pub struct PixelBuilder<'a, 'b> {
-    arena: &'a BoxArena,
-    workspace: &'b mut BoxBuilder,
-}
-
-impl<'a, 'b> PixelBuilder<'a, 'b> {
-    pub fn new(arena: &'a BoxArena, workspace: &'b mut BoxBuilder) -> Self {
-        workspace.reset();
-        Self { arena, workspace }
-    }
-
-    pub fn build_pixel<X, Y>(self, x: X, y: Y) -> RawBox<'b, PixelBox>
-    where
-        X: IntoRawBox,
-        Y: IntoRawBox,
-    {
-        let x_raw = x.into_raw_box(self.arena, &mut self.workspace.scratch_x);
-        let y_raw = y.into_raw_box(self.arena, &mut self.workspace.scratch_y);
-
-        self.workspace.colors.push(Color::Black);
-        self.workspace.multiplicities.push(Natural::from(1_u32));
-        self.workspace
-            .lengths
-            .push(1 + x_raw.lengths.len() as u32 + y_raw.lengths.len() as u32);
-
-        self.workspace.colors.extend_from_slice(x_raw.colors);
-        self.workspace
-            .multiplicities
-            .extend_from_slice(x_raw.multiplicities);
-        self.workspace.lengths.extend_from_slice(x_raw.lengths);
-
-        self.workspace.colors.extend_from_slice(y_raw.colors);
-        self.workspace
-            .multiplicities
-            .extend_from_slice(y_raw.multiplicities);
-        self.workspace.lengths.extend_from_slice(y_raw.lengths);
-
-        RawBox::new(
-            &self.workspace.colors,
-            &self.workspace.multiplicities,
-            &self.workspace.lengths,
-        )
-    }
-}
-
-pub trait IntoRawBox {
-    type Target: BoxType;
-
-    /// Returns a raw view of the value without committing to the arena, for use in constructing new boxes
-    fn into_raw_box<'a>(
-        self,
-        arena: &'a BoxArena,
-        scratch: &'a mut Vec<Natural>,
-    ) -> RawBox<'a, Self::Target>;
-}
-
-impl<T: BoxType> IntoRawBox for BoxId<T> {
-    type Target = T;
-
-    #[inline]
-    fn into_raw_box<'a>(
-        self,
-        arena: &'a BoxArena,
-        _scratch: &'a mut Vec<Natural>,
-    ) -> RawBox<'a, Self::Target> {
-        arena.get_raw(self)
-    }
-}
-
-impl IntoRawBox for u32 {
-    type Target = NumBox;
-
-    #[inline]
-    fn into_raw_box<'a>(
-        self,
-        _arena: &'a BoxArena,
-        scratch: &'a mut Vec<Natural>,
-    ) -> RawBox<'a, Self::Target> {
-        scratch.push(Natural::from(1_u32));
-        scratch.push(Natural::from(self));
-        RawBox::<NumBox>::new(&[Color::Black, Color::Black], scratch, &[2, 1])
-    }
-}
-
-pub trait IntoBox {
-    type Target: BoxType;
-
-    /// Convert or pass through the value into a box of the target type, committing to the arena if necessary
-    fn into_box(self, arena: &mut BoxArena) -> BoxId<Self::Target>;
-}
-
-impl<T: BoxType> IntoBox for BoxId<T> {
-    type Target = T;
-
-    #[inline]
-    fn into_box(self, _arena: &mut BoxArena) -> BoxId<Self::Target> {
-        self
-    }
-}
-
-impl IntoBox for u32 {
-    type Target = NumBox;
-
-    #[inline]
-    fn into_box(self, arena: &mut BoxArena) -> BoxId<Self::Target> {
-        arena.from_u32(self)
     }
 }
 
@@ -1323,18 +1200,18 @@ macro_rules! maxel_alt {
     };
 }
 
-impl BoxArena {
-    /// Inspects the serialized manifest to safely reconstruct a strongly-typed handle
-    pub fn get_typed_root<T: BoxType>(&self, index: u32) -> Option<BoxId<T>> {
-        let kind = self.kinds.get(index as usize)?;
-
-        if *kind == T::KIND {
-            Some(BoxId::<T>::new(index))
-        } else {
-            None
-        }
-    }
-}
+// impl BoxStore {
+//     /// Inspects the serialized manifest to safely reconstruct a strongly-typed handle
+//     pub fn get_typed_root<T: BoxType>(&self, index: u32) -> Option<BoxId<T>> {
+//         let kind = self.kinds.get(index as usize)?;
+//
+//         if *kind == T::KIND {
+//             Some(BoxId::<T>::new(index))
+//         } else {
+//             None
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
@@ -1342,7 +1219,7 @@ mod tests {
 
     #[test]
     fn test_add() {
-        let mut arena = BoxArena::new();
+        let mut arena = BoxStore::new(0);
         let zero = arena.zero();
 
         let two = arena.add(arena.one(), arena.one());
@@ -1399,7 +1276,7 @@ mod tests {
 
     #[test]
     fn test_mul() {
-        let mut arena = BoxArena::new();
+        let mut arena = BoxStore::new(0);
         let two = arena.from_u32(2);
         let three = arena.from_u32(3);
         let six = arena.mul(two, three);
@@ -1435,27 +1312,22 @@ mod tests {
 
     #[test]
     fn test_pixel() {
-        let mut arena = BoxArena::new();
-        let mut workspace = BoxBuilder::new();
+        let mut arena = BoxStore::new(0);
 
         let one = arena.one();
         let two = arena.from_u32(2);
         let three = arena.from_u32(3);
 
-        let raw_p1 = PixelBuilder::new(&arena, &mut workspace).build_pixel(one, two);
-        let p1 = arena.commit(raw_p1);
+        let p1 = arena.pixel(one, two);
 
-        let raw_p2 = PixelBuilder::new(&arena, &mut workspace).build_pixel(two, three);
-        let p2 = arena.commit(raw_p2);
+        let p2 = arena.pixel(two, three);
 
         let p3 = arena.mul_pixel(p1, p2);
-        let raw_expected = PixelBuilder::new(&arena, &mut workspace).build_pixel(one, three);
-        let expected = arena.commit(raw_expected);
+        let expected = arena.pixel(one, three);
 
         assert_eq!(p3, Some(expected));
 
-        let raw_p4 = PixelBuilder::new(&arena, &mut workspace).build_pixel(three, two);
-        let p4 = arena.commit(raw_p4);
+        let p4 = arena.pixel(three, two);
         let p5 = arena.mul_pixel(p1, p4);
         assert!(p5.is_none());
     }
