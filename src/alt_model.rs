@@ -161,7 +161,6 @@ impl_box_mul!(PolynumBox, MultinumBox => MultinumBox);
 
 #[derive(Debug)]
 pub struct BoxId<T: BoxType> {
-    store_id: u32,
     index: u32,
     _marker: std::marker::PhantomData<T>,
 }
@@ -181,17 +180,11 @@ impl<T: BoxType> Eq for BoxId<T> {}
 
 impl<T: BoxType> BoxId<T> {
     #[inline(always)]
-    pub const fn new(store_id: u32, index: u32) -> Self {
+    pub const fn new(index: u32) -> Self {
         Self {
-            store_id,
             index,
             _marker: PhantomData,
         }
-    }
-
-    #[inline(always)]
-    pub fn store_id(self) -> u32 {
-        self.store_id
     }
 
     #[inline(always)]
@@ -201,7 +194,7 @@ impl<T: BoxType> BoxId<T> {
 
     #[inline(always)]
     pub fn into_any(self) -> BoxId<AnyBox> {
-        BoxId::new(self.store_id, self.index())
+        BoxId::new(self.index())
     }
 }
 
@@ -464,17 +457,6 @@ impl Mul<Color> for Color {
     }
 }
 
-pub struct ScratchRegistry<'a> {
-    stores: Vec<&'a BoxStore>,
-}
-
-impl<'a> ScratchRegistry<'a> {
-    pub fn get_raw<T: BoxType>(&self, id: BoxId<T>) -> RawBox<'a, T> {
-        let target_store = self.stores[id.store_id as usize];
-        target_store.get_raw(id)
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct BoxConstants {
     pub zero: BoxId<NumBox>,
@@ -492,8 +474,6 @@ pub struct BoxConstants {
 /// Global store for box computations
 #[derive(Debug)]
 pub struct BoxStore {
-    /// ID of this store
-    pub store_id: u32,
     /// Box colors
     pub colors: Vec<Color>,
     /// Multiplicities of boxes
@@ -514,14 +494,14 @@ pub struct BoxStore {
 
 impl Default for BoxStore {
     fn default() -> Self {
-        Self::new(0)
+        Self::new()
     }
 }
 
 const BOX_STORE_CAPACITY: usize = 32;
 impl BoxStore {
     /// Initializes the store with elementary boxes
-    pub fn new(store_id: u32) -> Self {
+    pub fn new() -> Self {
         let random_state = RandomState::new();
 
         let active_boxes = Vec::with_capacity(BOX_STORE_CAPACITY);
@@ -534,7 +514,7 @@ impl BoxStore {
 
         let mut register_box = |kind: BoxKind, hash: u64, raw_box: RawBox<'_, AnyBox>| {
             let index = lengths.len() as u32;
-            let id = BoxId::<AnyBox>::new(store_id, index);
+            let id = BoxId::<AnyBox>::new(index);
             // Commit data
             cache.insert(hash, id);
             kinds.push(kind);
@@ -547,61 +527,47 @@ impl BoxStore {
 
         let mult = [Natural::from(1_u32)];
         let raw_zero = RawBox::<NumBox>::new(&[Color::Black], &mult, &[1]);
-        let zero_id = BoxId::<NumBox>::new(
-            store_id,
-            register_box(
-                raw_zero.kind(),
-                raw_zero.hash(&random_state),
-                raw_zero.cast(),
-            ),
-        );
+        let zero_id = BoxId::<NumBox>::new(register_box(
+            raw_zero.kind(),
+            raw_zero.hash(&random_state),
+            raw_zero.cast(),
+        ));
 
         let raw_anti_zero = RawBox::<NumBox>::new(&[Color::Red], &mult, &[1]);
-        let anti_zero_id = BoxId::<NumBox>::new(
-            store_id,
-            register_box(
-                raw_anti_zero.kind(),
-                raw_anti_zero.hash(&random_state),
-                raw_anti_zero.cast(),
-            ),
-        );
+        let anti_zero_id = BoxId::<NumBox>::new(register_box(
+            raw_anti_zero.kind(),
+            raw_anti_zero.hash(&random_state),
+            raw_anti_zero.cast(),
+        ));
 
         let mult = [Natural::from(1_u32), Natural::from(1_u32)];
         let raw_one = RawBox::<NumBox>::new(&[Color::Black, Color::Black], &mult, &[2, 1]);
-        let one_id = BoxId::<NumBox>::new(
-            store_id,
-            register_box(raw_one.kind(), raw_one.hash(&random_state), raw_one.cast()),
-        );
+        let one_id = BoxId::<NumBox>::new(register_box(
+            raw_one.kind(),
+            raw_one.hash(&random_state),
+            raw_one.cast(),
+        ));
 
         let raw_neg_one = RawBox::<NumBox>::new(&[Color::Black, Color::Red], &mult, &[2, 1]);
-        let neg_one_id = BoxId::<NumBox>::new(
-            store_id,
-            register_box(
-                raw_neg_one.kind(),
-                raw_neg_one.hash(&random_state),
-                raw_neg_one.cast(),
-            ),
-        );
+        let neg_one_id = BoxId::<NumBox>::new(register_box(
+            raw_neg_one.kind(),
+            raw_neg_one.hash(&random_state),
+            raw_neg_one.cast(),
+        ));
 
         let raw_anti_one = RawBox::<NumBox>::new(&[Color::Red, Color::Black], &mult, &[2, 1]);
-        let anti_one_id = BoxId::<NumBox>::new(
-            store_id,
-            register_box(
-                raw_anti_one.kind(),
-                raw_anti_one.hash(&random_state),
-                raw_anti_one.cast(),
-            ),
-        );
+        let anti_one_id = BoxId::<NumBox>::new(register_box(
+            raw_anti_one.kind(),
+            raw_anti_one.hash(&random_state),
+            raw_anti_one.cast(),
+        ));
 
         let raw_anti_neg_one = RawBox::<NumBox>::new(&[Color::Red, Color::Red], &mult, &[2, 1]);
-        let anti_neg_one_id = BoxId::<NumBox>::new(
-            store_id,
-            register_box(
-                raw_anti_neg_one.kind(),
-                raw_anti_neg_one.hash(&random_state),
-                raw_anti_neg_one.cast(),
-            ),
-        );
+        let anti_neg_one_id = BoxId::<NumBox>::new(register_box(
+            raw_anti_neg_one.kind(),
+            raw_anti_neg_one.hash(&random_state),
+            raw_anti_neg_one.cast(),
+        ));
 
         let mult = [
             Natural::from(1_u32),
@@ -613,47 +579,35 @@ impl BoxStore {
             &mult,
             &[3, 2, 1],
         );
-        let alpha_id = BoxId::<PolynumBox>::new(
-            store_id,
-            register_box(
-                raw_alpha.kind(),
-                raw_alpha.hash(&random_state),
-                raw_alpha.cast(),
-            ),
-        );
+        let alpha_id = BoxId::<PolynumBox>::new(register_box(
+            raw_alpha.kind(),
+            raw_alpha.hash(&random_state),
+            raw_alpha.cast(),
+        ));
 
         let raw_neg_alpha =
             RawBox::<PolynumBox>::new(&[Color::Black, Color::Red, Color::Black], &mult, &[3, 2, 1]);
-        let neg_alpha_id = BoxId::<PolynumBox>::new(
-            store_id,
-            register_box(
-                raw_neg_alpha.kind(),
-                raw_neg_alpha.hash(&random_state),
-                raw_neg_alpha.cast(),
-            ),
-        );
+        let neg_alpha_id = BoxId::<PolynumBox>::new(register_box(
+            raw_neg_alpha.kind(),
+            raw_neg_alpha.hash(&random_state),
+            raw_neg_alpha.cast(),
+        ));
 
         let raw_anti_alpha =
             RawBox::<PolynumBox>::new(&[Color::Red, Color::Black, Color::Black], &mult, &[3, 2, 1]);
-        let anti_alpha_id = BoxId::<PolynumBox>::new(
-            store_id,
-            register_box(
-                raw_anti_alpha.kind(),
-                raw_anti_alpha.hash(&random_state),
-                raw_anti_alpha.cast(),
-            ),
-        );
+        let anti_alpha_id = BoxId::<PolynumBox>::new(register_box(
+            raw_anti_alpha.kind(),
+            raw_anti_alpha.hash(&random_state),
+            raw_anti_alpha.cast(),
+        ));
 
         let raw_anti_neg_alpha =
             RawBox::<PolynumBox>::new(&[Color::Red, Color::Red, Color::Black], &mult, &[3, 2, 1]);
-        let anti_neg_alpha_id = BoxId::<PolynumBox>::new(
-            store_id,
-            register_box(
-                raw_anti_neg_alpha.kind(),
-                raw_anti_neg_alpha.hash(&random_state),
-                raw_anti_neg_alpha.cast(),
-            ),
-        );
+        let anti_neg_alpha_id = BoxId::<PolynumBox>::new(register_box(
+            raw_anti_neg_alpha.kind(),
+            raw_anti_neg_alpha.hash(&random_state),
+            raw_anti_neg_alpha.cast(),
+        ));
 
         let constants = BoxConstants {
             zero: zero_id,
@@ -669,7 +623,6 @@ impl BoxStore {
         };
 
         Self {
-            store_id,
             kinds,
             colors,
             multiplicities,
@@ -684,7 +637,7 @@ impl BoxStore {
     /// Returns the next available ID
     #[inline(always)]
     fn next_id<T: BoxType>(&self) -> BoxId<T> {
-        BoxId::new(self.store_id, self.colors.len() as u32)
+        BoxId::new(self.colors.len() as u32)
     }
 
     /// Getters for predefined constants
@@ -745,7 +698,7 @@ impl BoxStore {
 
         // cache hit
         if let Some(&box_id) = self.cache.get(&hash) {
-            return BoxId::<T>::new(self.store_id, box_id.index());
+            return BoxId::<T>::new(box_id.index());
         }
 
         // cache miss - commit to arena
@@ -758,23 +711,18 @@ impl BoxStore {
         self.multiplicities.extend_from_slice(raw.multiplicities);
         self.lengths.extend_from_slice(raw.lengths);
 
-        BoxId::<T>::new(self.store_id, new_id.index())
+        BoxId::<T>::new(new_id.index())
     }
 
     /// Sorts the box before commiting it
-    fn commit_sorted<T: BoxType>(&mut self, mut raw: RawBoxMut<'_, T>) -> BoxId<T> {
+    fn sort_and_commit<T: BoxType>(&mut self, mut raw: RawBoxMut<'_, T>) -> BoxId<T> {
         raw.sort_immediate_children();
         self.commit(RawBox::from(raw))
     }
 
     /// Deep-copies a box from a scratch store into this permanent store
-    pub fn commit_from_scratch<T: BoxType>(
-        &mut self,
-        box_id: BoxId<T>,
-        registry: &ScratchRegistry,
-    ) -> BoxId<T> {
-        let raw_box = registry.get_raw(box_id);
-        self.commit(raw_box)
+    pub fn commit_owned<T: BoxType>(&mut self, raw_box: RawBoxOwned<T>) -> BoxId<T> {
+        self.commit(raw_box.as_ref())
     }
 
     /// Wraps an existing expression in a new box container
@@ -911,7 +859,7 @@ impl BoxStore {
             let end = start_idx + box_len;
 
             while curr < end {
-                let curr_id = BoxId::new(self.store_id, curr);
+                let curr_id = BoxId::new(curr);
                 let curr_raw = self.get_raw(curr_id);
                 let curr_mul = curr_raw.multiplicity();
                 let curr_col = curr_raw.color();
@@ -992,9 +940,7 @@ impl BoxStore {
     {
         let mut scratch_box = RawBoxOwned::new();
         self.add_scratch(lhs, rhs, &mut scratch_box);
-        let mut raw = scratch_box.as_mut();
-        raw.sort_immediate_children();
-        self.commit(RawBox::from(raw))
+        self.sort_and_commit(scratch_box.as_mut())
     }
 
     /// Multiplication of boxes
@@ -1006,12 +952,11 @@ impl BoxStore {
         // extract left children
         let mut lhs_children = Vec::new();
         let lhs_start = lhs.index();
-        let lhs_store_id = lhs.store_id();
         let lhs_len = self.box_len(lhs);
         let mut curr = lhs_start + 1;
         let end = lhs_start + lhs_len;
         while curr < end {
-            let child_id = BoxId::<AnyBox>::new(lhs_store_id, curr);
+            let child_id = BoxId::<AnyBox>::new(curr);
             lhs_children.push(child_id);
             curr += self.lengths[curr as usize];
         }
@@ -1023,7 +968,7 @@ impl BoxStore {
         let mut curr = rhs_start + 1;
         let end = rhs_start + rhs_len;
         while curr < end {
-            let child_id = BoxId::<AnyBox>::new(rhs.store_id, curr);
+            let child_id = BoxId::<AnyBox>::new(curr);
             rhs_children.push(child_id);
             curr += self.lengths[curr as usize];
         }
@@ -1113,7 +1058,7 @@ impl BoxStore {
         lengths[0] = (1 + written_len) as u32;
 
         let raw = RawBoxMut::new(&mut colors, &mut multiplicities, &mut lengths);
-        self.commit_sorted(raw)
+        self.sort_and_commit(raw)
     }
 
     /// Instantiates a pixel
@@ -1143,14 +1088,14 @@ impl BoxStore {
 
     fn pixel_x(&self, pixel: BoxId<PixelBox>) -> BoxId<PixelBox> {
         let idx = pixel.index();
-        BoxId::new(self.store_id, idx + 1)
+        BoxId::new(idx + 1)
     }
 
     fn pixel_y(&self, pixel: BoxId<PixelBox>) -> BoxId<PixelBox> {
         let idx = pixel.index();
         let idx_x = idx + 1;
         let len_x = self.lengths[idx_x as usize];
-        BoxId::new(self.store_id, idx_x + len_x)
+        BoxId::new(idx_x + len_x)
     }
 
     /// Multiplies two pixels
@@ -1213,13 +1158,36 @@ macro_rules! maxel_alt {
 //     }
 // }
 
+// fn evaluate_expression(permanent_store: &mut BoxStore, expression: &Expression) -> BoxId<AnyBox> {
+//     // 1. Allocate a fresh, isolated workspace for this evaluation run
+//     let mut scratch_store = BoxStore::new(1);
+//
+//     // 2. Build a registry containing ONLY our volatile scratch spaces
+//     let scratch_registry = ScratchRegistry::new(vec![&scratch_store]);
+//
+//     // 3. Execute the math. All intermediate nodes are written to the scratch store.
+//     //    They generate lightweight, Copy-safe BoxIds instantly.
+//     let lhs = scratch_store.add_constants(permanent_store.constants.identity);
+//     let rhs = scratch_store.multiply_pixels(lhs, lhs);
+//     let final_scratch_id = scratch_store.finalize_matrix(rhs);
+//
+//     // 4. Route the final result safely at the call site
+//     if final_scratch_id.store_id == permanent_store.store_id {
+//         // Edge case: The evaluation resulted in a structural no-op or direct global reference
+//         final_scratch_id
+//     } else {
+//         // Standard path: Migrate the evaluated tree from the scratch zone to the permanent zone
+//         permanent_store.commit_from_scratch(final_scratch_id, &scratch_registry)
+//     }
+// }
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_add() {
-        let mut arena = BoxStore::new(0);
+        let mut arena = BoxStore::new();
         let zero = arena.zero();
 
         let two = arena.add(arena.one(), arena.one());
@@ -1276,7 +1244,7 @@ mod tests {
 
     #[test]
     fn test_mul() {
-        let mut arena = BoxStore::new(0);
+        let mut arena = BoxStore::new();
         let two = arena.from_u32(2);
         let three = arena.from_u32(3);
         let six = arena.mul(two, three);
@@ -1312,7 +1280,7 @@ mod tests {
 
     #[test]
     fn test_pixel() {
-        let mut arena = BoxStore::new(0);
+        let mut arena = BoxStore::new();
 
         let one = arena.one();
         let two = arena.from_u32(2);
