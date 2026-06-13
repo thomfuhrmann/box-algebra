@@ -280,7 +280,7 @@ impl<'a, T: BoxType> RawBox<'a, T> {
         self.lengths[0]
     }
 
-    pub fn iter(&'a self) -> RawBoxIter<'a, T> {
+    pub fn into_iter(self) -> RawBoxIter<'a, T> {
         RawBoxIter {
             raw: self,
             index: 1,
@@ -310,7 +310,7 @@ impl<'a, T: BoxType> From<&'a RawBoxOwned<T>> for RawBox<'a, T> {
 
 #[derive(Debug)]
 pub struct RawBoxIter<'a, T: BoxType> {
-    raw: &'a RawBox<'a, T>,
+    raw: RawBox<'a, T>,
     index: usize,
 }
 
@@ -489,13 +489,6 @@ impl<T: BoxType> BoxState<T> {
             BoxState::Committed(box_id) => box_id,
         }
     }
-}
-
-/// Side of a box in a binary operation (e.g. addition)
-#[derive(Debug, Clone, Copy)]
-enum Side {
-    Left,
-    Right,
 }
 
 /// Color of a box
@@ -915,6 +908,35 @@ impl BoxStore {
         raw.hash_content(&self.random_state)
     }
 
+    fn add_child_boxes<'a>(
+        &self,
+        raw_box: RawBox<'a, AnyBox>,
+        unique_children: &mut RapidHashMap<u64, (RawBox<'a, AnyBox>, Color, Natural)>,
+    ) {
+        for child_raw in raw_box.into_iter() {
+            let child_col = child_raw.color();
+            let child_mul = child_raw.multiplicity();
+            let struct_hash = child_raw.hash_content(&self.random_state);
+
+            if let Some((other_raw, other_col, other_mul)) = unique_children.get_mut(&struct_hash)
+                && child_raw.cmp_content(other_raw)
+            {
+                if child_col + *other_col == Color::Red {
+                    if child_mul < other_mul {
+                        other_mul.saturating_sub_assign(child_mul);
+                    } else {
+                        *other_mul = child_mul.saturating_sub(other_mul.clone());
+                        *other_col = child_col;
+                    }
+                } else {
+                    *other_mul += child_mul;
+                }
+            } else {
+                unique_children.insert(struct_hash, (child_raw, child_col, child_mul.clone()));
+            }
+        }
+    }
+
     /// Internal helper that does not commit to the store
     fn add_raw<L, R>(
         &self,
@@ -926,92 +948,24 @@ impl BoxStore {
         R: BoxType,
     {
         let mut result = RawBoxOwned::<L::Output>::new();
-        let mut unique_children: RapidHashMap<u64, (Side, usize, Color, Natural)> =
+        let mut unique_children: RapidHashMap<u64, (RawBox<AnyBox>, Color, Natural)> =
             RapidHashMap::new();
-
-        let mut process_child_boxes = |raw_box: RawBox<AnyBox>, side: Side| {
-            let box_len = raw_box.length() as usize;
-            let mut curr = 1;
-
-            while curr < box_len {
-                let curr_mul = raw_box.multiplicities[curr].clone();
-                let curr_col = raw_box.colors[curr];
-                let curr_len = raw_box.lengths[curr] as usize;
-                let curr_raw = RawBox::<AnyBox>::new(
-                    &raw_box.colors[curr..(curr + curr_len)],
-                    &raw_box.multiplicities[curr..(curr + curr_len)],
-                    &raw_box.lengths[curr..(curr + curr_len)],
-                );
-                let struct_hash = curr_raw.hash_content(&self.random_state);
-
-                let mut found_match = false;
-                if let Some((other_side, idx, other_col, other_mul)) =
-                    unique_children.get_mut(&struct_hash)
-                {
-                    let other_raw = match *other_side {
-                        Side::Left => RawBox::<AnyBox>::new(
-                            &lhs.colors[*idx..(*idx + lhs.lengths[*idx] as usize)],
-                            &lhs.multiplicities[*idx..(*idx + lhs.lengths[*idx] as usize)],
-                            &lhs.lengths[*idx..(*idx + lhs.lengths[*idx] as usize)],
-                        ),
-                        Side::Right => RawBox::<AnyBox>::new(
-                            &rhs.colors[*idx..(*idx + rhs.lengths[*idx] as usize)],
-                            &rhs.multiplicities[*idx..(*idx + rhs.lengths[*idx] as usize)],
-                            &rhs.lengths[*idx..(*idx + rhs.lengths[*idx] as usize)],
-                        ),
-                    };
-                    if curr_raw.cmp_content(&other_raw) {
-                        let curr_mul = curr_mul.clone();
-                        if curr_col + *other_col == Color::Red {
-                            if curr_mul < *other_mul {
-                                other_mul.saturating_sub_assign(curr_mul);
-                            } else {
-                                *other_mul = curr_mul.saturating_sub(other_mul.clone());
-                                *other_col = curr_col;
-                            }
-                        } else {
-                            *other_mul += curr_mul;
-                        }
-                        found_match = true;
-                    }
-                }
-
-                if !found_match {
-                    unique_children.insert(struct_hash, (side, curr, curr_col, curr_mul.clone()));
-                }
-
-                curr += curr_len;
-            }
-        };
 
         let lhs_col = lhs.color();
         let rhs_col = rhs.color();
 
-        process_child_boxes(lhs.clone().cast(), Side::Left);
-        process_child_boxes(rhs.clone().cast(), Side::Right);
+        self.add_child_boxes(lhs.cast(), &mut unique_children);
+        self.add_child_boxes(rhs.cast(), &mut unique_children);
 
         result.colors.push(lhs_col + rhs_col);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(0);
 
         let mut written_len = 0;
-        for (curr_side, curr_idx, curr_col, curr_mul) in unique_children.values() {
+        for (curr_raw, curr_col, curr_mul) in unique_children.values() {
             if *curr_mul == 0 {
                 continue;
             }
-
-            let curr_raw = match *curr_side {
-                Side::Left => RawBox::<AnyBox>::new(
-                    &lhs.colors[*curr_idx..(*curr_idx + lhs.lengths[*curr_idx] as usize)],
-                    &lhs.multiplicities[*curr_idx..(*curr_idx + lhs.lengths[*curr_idx] as usize)],
-                    &lhs.lengths[*curr_idx..(*curr_idx + lhs.lengths[*curr_idx] as usize)],
-                ),
-                Side::Right => RawBox::<AnyBox>::new(
-                    &rhs.colors[*curr_idx..(*curr_idx + rhs.lengths[*curr_idx] as usize)],
-                    &rhs.multiplicities[*curr_idx..(*curr_idx + rhs.lengths[*curr_idx] as usize)],
-                    &rhs.lengths[*curr_idx..(*curr_idx + rhs.lengths[*curr_idx] as usize)],
-                ),
-            };
 
             let len = curr_raw.length() as usize;
             for i in 0..len {
@@ -1058,13 +1012,16 @@ impl BoxStore {
         let mut result = RawBoxOwned::new();
         let mut unique_children: RapidHashMap<u64, RawBoxOwned<AnyBox>> = RapidHashMap::new();
 
-        for left_child in lhs_raw.iter() {
-            for right_child in rhs_raw.iter() {
+        let lhs_col = lhs_raw.color();
+        let rhs_col = rhs_raw.color();
+
+        for left_child in lhs_raw.into_iter() {
+            for right_child in rhs_raw.clone().into_iter() {
                 let left_mul = left_child.multiplicity();
                 let right_mul = right_child.multiplicity();
                 let curr_mul = left_mul * right_mul;
 
-                let mut curr_owned = self.add_raw(left_child.clone(), right_child);
+                let mut curr_owned = self.add_raw(left_child, right_child);
                 curr_owned.sort_immediate_children();
 
                 let curr_col = curr_owned.colors[0];
@@ -1091,9 +1048,6 @@ impl BoxStore {
                 }
             }
         }
-
-        let lhs_col = lhs_raw.color();
-        let rhs_col = rhs_raw.color();
 
         result.colors.push(lhs_col + rhs_col);
         result.multiplicities.push(Natural::from(1_u32));
