@@ -12,7 +12,7 @@ use std::{
 
 use rapidhash::{HashMapExt, RapidHashMap, fast::RandomState};
 
-/// Kind of boxes that can exist in an store
+/// Kind of boxes that can exist in a store
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BoxKind {
@@ -24,7 +24,7 @@ pub enum BoxKind {
     Maxel,
 }
 
-/// Trait that describes the type of a box
+/// Traits that describes the type of a box
 pub trait BoxType: Sized + Clone {
     const KIND: BoxKind;
 
@@ -199,7 +199,7 @@ impl<T: BoxType> BoxId<T> {
 }
 
 /// Raw uncomitted box data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RawBox<'a, T: BoxType> {
     pub colors: &'a [Color],
     pub multiplicities: &'a [Natural],
@@ -279,6 +279,13 @@ impl<'a, T: BoxType> RawBox<'a, T> {
     pub fn length(&self) -> u32 {
         self.lengths[0]
     }
+
+    pub fn iter(&'a self) -> RawBoxIter<'a, T> {
+        RawBoxIter {
+            raw: self,
+            index: 1,
+        }
+    }
 }
 
 impl<'a, T: BoxType> PartialEq for RawBox<'a, T> {
@@ -298,6 +305,32 @@ impl<'a, T: BoxType> From<&'a RawBoxOwned<T>> for RawBox<'a, T> {
             &raw_owned.multiplicities,
             &raw_owned.lengths,
         )
+    }
+}
+
+#[derive(Debug)]
+pub struct RawBoxIter<'a, T: BoxType> {
+    raw: &'a RawBox<'a, T>,
+    index: usize,
+}
+
+impl<'a, T: BoxType> Iterator for RawBoxIter<'a, T> {
+    type Item = RawBox<'a, AnyBox>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let total_len = self.raw.length() as usize;
+        if self.index < total_len {
+            let child_idx = self.index;
+            let child_len = self.raw.lengths[self.index] as usize;
+            self.index = child_idx + child_len;
+            return Some(RawBox::new(
+                &self.raw.colors[child_idx..child_idx + child_len],
+                &self.raw.multiplicities[child_idx..child_idx + child_len],
+                &self.raw.lengths[child_idx..child_idx + child_len],
+            ));
+        }
+
+        None
     }
 }
 
@@ -334,6 +367,16 @@ impl<T: BoxType> RawBoxOwned<T> {
     /// Hashes the box
     fn hash(&self, random_state: &RandomState) -> u64 {
         self.as_raw().hash(random_state)
+    }
+
+    /// Hashes the content of the box
+    fn hash_content(&self, random_state: &RandomState) -> u64 {
+        self.as_raw().hash_content(random_state)
+    }
+
+    /// Compares the content of the two boxes for equality
+    fn cmp_content(&self, other: &Self) -> bool {
+        self.as_raw().cmp_content(&other.as_raw())
     }
 
     /// Sorts the immediate child boxes of this box
@@ -759,15 +802,15 @@ impl BoxStore {
         multiplicity: Natural,
     ) -> BoxState<U> {
         let raw = source.as_raw(self);
-        let source_len = raw.length() as usize;
+        let source_len = raw.length();
 
         let mut result = RawBoxOwned::<U>::new();
         result.colors.push(color);
         result.multiplicities.push(Natural::from(1_u32));
-        result.lengths.push(1 + source_len as u32);
+        result.lengths.push(1 + source_len);
 
         // copy source elements
-        for i in 0..source_len {
+        for i in 0..source_len as usize {
             result.colors.push(raw.colors[i]);
 
             if i == 0 {
@@ -873,15 +916,16 @@ impl BoxStore {
     }
 
     /// Internal helper that does not commit to the store
-    fn add_raw<'a, 'b, L, R>(
+    fn add_raw<L, R>(
         &self,
-        lhs: RawBox<'a, L>,
-        rhs: RawBox<'b, R>,
-        result: &mut RawBoxOwned<L::Output>,
-    ) where
+        lhs: RawBox<'_, L>,
+        rhs: RawBox<'_, R>,
+    ) -> RawBoxOwned<<L as BoxAdd<R>>::Output>
+    where
         L: BoxType + BoxAdd<R>,
         R: BoxType,
     {
+        let mut result = RawBoxOwned::<L::Output>::new();
         let mut unique_children: RapidHashMap<u64, (Side, usize, Color, Natural)> =
             RapidHashMap::new();
 
@@ -987,103 +1031,69 @@ impl BoxStore {
         }
 
         result.lengths[0] = (1 + written_len) as u32;
+        result
     }
 
-    /// Adds two boxes
-    pub fn add<L, R>(&mut self, lhs: &BoxState<L>, rhs: &BoxState<R>) -> BoxState<L::Output>
+    /// Addition of boxes
+    pub fn add<L, R>(&self, lhs: &BoxState<L>, rhs: &BoxState<R>) -> BoxState<L::Output>
     where
         L: BoxType + BoxAdd<R>,
         R: BoxType,
     {
         let lhs_raw = lhs.as_raw(self);
         let rhs_raw = rhs.as_raw(self);
-        let mut result = RawBoxOwned::<L::Output>::new();
-        self.add_raw(lhs_raw, rhs_raw, &mut result);
-
+        let result = self.add_raw(lhs_raw, rhs_raw);
         BoxState::Uncommitted(result)
     }
 
-    /// Multiplication of boxes
-    pub fn mul<L, R>(&mut self, lhs: BoxId<L>, rhs: BoxId<R>) -> BoxId<L::Output>
+    fn mul_raw<L, R>(
+        &self,
+        lhs_raw: RawBox<'_, L>,
+        rhs_raw: RawBox<'_, R>,
+    ) -> RawBoxOwned<<L as BoxMul<R>>::Output>
     where
         L: BoxType + BoxMul<R>,
         R: BoxType,
     {
-        // extract left children
-        let mut lhs_children = Vec::new();
-        let lhs_start = lhs.index();
-        let lhs_len = self.box_len(lhs);
-        let mut curr = lhs_start + 1;
-        let end = lhs_start + lhs_len;
-        while curr < end {
-            let child_id = BoxId::<AnyBox>::new(curr);
-            lhs_children.push(child_id);
-            curr += self.lengths[curr as usize];
-        }
-
-        // extract right children
-        let mut rhs_children = Vec::new();
-        let rhs_start = rhs.index();
-        let rhs_len = self.box_len(rhs);
-        let mut curr = rhs_start + 1;
-        let end = rhs_start + rhs_len;
-        while curr < end {
-            let child_id = BoxId::<AnyBox>::new(curr);
-            rhs_children.push(child_id);
-            curr += self.lengths[curr as usize];
-        }
-
-        // let mut unique_children: RapidHashMap<u64, (BoxId, Color, Natural)> = RapidHashMap::new();
+        let mut result = RawBoxOwned::new();
         let mut unique_children: RapidHashMap<u64, RawBoxOwned<AnyBox>> = RapidHashMap::new();
 
-        for &left_child in &lhs_children {
-            for &right_child in &rhs_children {
-                let mut curr_owned = RawBoxOwned::new();
-                let left_raw = self.get_raw(left_child);
-                let right_raw = self.get_raw(right_child);
-                self.add_raw(left_raw, right_raw, &mut curr_owned);
+        for left_child in lhs_raw.iter() {
+            for right_child in rhs_raw.iter() {
+                let left_mul = left_child.multiplicity();
+                let right_mul = right_child.multiplicity();
+                let curr_mul = left_mul * right_mul;
+
+                let mut curr_owned = self.add_raw(left_child.clone(), right_child);
                 curr_owned.sort_immediate_children();
 
                 let curr_col = curr_owned.colors[0];
-                let left_mul = self.box_multiplicity(left_child);
-                let right_mul = self.box_multiplicity(right_child);
-                let curr_mul = left_mul * right_mul;
+                let struct_hash = curr_owned.hash_content(&self.random_state);
 
-                let curr_raw = curr_owned.as_raw();
-                let struct_hash = curr_raw.hash_content(&self.random_state);
-
-                let mut found_match = false;
-                if let Some(other_owned) = unique_children.get_mut(&struct_hash) {
-                    let other_raw = other_owned.as_raw();
-                    if curr_raw.cmp_content(&other_raw) {
-                        let other_col = &mut other_owned.colors[0];
-                        let other_mul = &mut other_owned.multiplicities[0];
-                        let curr_mul = curr_mul.clone();
-                        if curr_col + *other_col == Color::Red {
-                            if &curr_mul < other_mul {
-                                other_mul.saturating_sub_assign(curr_mul);
-                            } else {
-                                *other_mul = curr_mul.saturating_sub(other_mul.clone());
-                                *other_col = curr_col;
-                            }
+                if let Some(other_owned) = unique_children.get_mut(&struct_hash)
+                    && curr_owned.cmp_content(other_owned)
+                {
+                    let other_col = &mut other_owned.colors[0];
+                    let other_mul = &mut other_owned.multiplicities[0];
+                    if curr_col + *other_col == Color::Red {
+                        if &curr_mul < other_mul {
+                            other_mul.saturating_sub_assign(curr_mul);
                         } else {
-                            *other_mul += curr_mul;
+                            *other_mul = curr_mul.saturating_sub(other_mul.clone());
+                            *other_col = curr_col;
                         }
-                        found_match = true;
+                    } else {
+                        *other_mul += curr_mul;
                     }
-                }
-
-                if !found_match {
-                    curr_owned.multiplicities[0] = curr_mul.clone();
+                } else {
+                    curr_owned.multiplicities[0] = curr_mul;
                     unique_children.insert(struct_hash, curr_owned);
                 }
             }
         }
 
-        let mut result = RawBoxOwned::<L::Output>::new();
-
-        let lhs_col = self.box_color(lhs);
-        let rhs_col = self.box_color(rhs);
+        let lhs_col = lhs_raw.color();
+        let rhs_col = rhs_raw.color();
 
         result.colors.push(lhs_col + rhs_col);
         result.multiplicities.push(Natural::from(1_u32));
@@ -1116,68 +1126,90 @@ impl BoxStore {
 
         result.lengths[0] = (1 + written_len) as u32;
 
-        self.sort_and_commit(result)
+        result
     }
 
-    // /// Instantiates a pixel from two boxes
-    // pub fn pixel<T: BoxType>(&mut self, x: BoxId<T>, y: BoxId<T>) -> BoxId<PixelBox> {
-    //     let x_raw = self.get_raw(x);
-    //     let x_len = x_raw.length();
+    /// Multiplication of boxes
+    pub fn mul<L, R>(&self, lhs: &BoxState<L>, rhs: &BoxState<R>) -> BoxState<L::Output>
+    where
+        L: BoxType + BoxMul<R>,
+        R: BoxType,
+    {
+        let lhs_raw = lhs.as_raw(self);
+        let rhs_raw = rhs.as_raw(self);
+        let result = self.mul_raw(lhs_raw, rhs_raw);
+        BoxState::Uncommitted(result)
+    }
 
-    //     let y_raw = self.get_raw(y);
-    //     let y_len = y_raw.length();
+    /// Instantiates a pixel given two boxes
+    pub fn pixel_raw<T: BoxType>(
+        &self,
+        x_raw: RawBox<'_, T>,
+        y_raw: RawBox<'_, T>,
+    ) -> RawBoxOwned<PixelBox> {
+        let x_len = x_raw.length();
+        let y_len = y_raw.length();
 
-    //     let mut colors = vec![Color::Black];
-    //     let mut multiplicities = vec![Natural::from(1_u32)];
-    //     let mut lengths = vec![1 + x_len + y_len];
+        let mut result = RawBoxOwned::<PixelBox>::new();
+        result.colors.push(Color::Black);
+        result.multiplicities.push(Natural::from(1_u32));
+        result.lengths.push(1 + x_len + y_len);
 
-    //     // copy source elements
-    //     colors.extend_from_slice(x_raw.colors);
-    //     multiplicities.extend_from_slice(x_raw.multiplicities);
-    //     lengths.extend_from_slice(x_raw.lengths);
+        // copy source elements
+        result.colors.extend_from_slice(x_raw.colors);
+        result
+            .multiplicities
+            .extend_from_slice(x_raw.multiplicities);
+        result.lengths.extend_from_slice(x_raw.lengths);
 
-    //     colors.extend_from_slice(y_raw.colors);
-    //     multiplicities.extend_from_slice(y_raw.multiplicities);
-    //     lengths.extend_from_slice(y_raw.lengths);
+        result.colors.extend_from_slice(y_raw.colors);
+        result
+            .multiplicities
+            .extend_from_slice(y_raw.multiplicities);
+        result.lengths.extend_from_slice(y_raw.lengths);
 
-    //     let raw = RawBox::new(&colors, &multiplicities, &lengths);
-    //     self.commit(raw)
-    // }
+        result
+    }
 
-    // /// Returns the first component of a pixel
-    // fn pixel_x(&self, pixel: BoxId<PixelBox>) -> BoxId<PixelBox> {
-    //     let idx = pixel.index();
-    //     BoxId::new(idx + 1)
-    // }
+    /// Returns the first component of a pixel
+    pub fn pixel_x_raw<'a>(&'a self, raw: RawBox<'a, PixelBox>) -> RawBox<'a, PixelBox> {
+        let x_len = raw.lengths[1] as usize;
+        RawBox::new(
+            &raw.colors[1..1 + x_len],
+            &raw.multiplicities[1..1 + x_len],
+            &raw.lengths[1..1 + x_len],
+        )
+    }
 
-    // /// Returns the second component of a pixel
-    // fn pixel_y(&self, pixel: BoxId<PixelBox>) -> BoxId<PixelBox> {
-    //     let idx = pixel.index();
-    //     let idx_x = idx + 1;
-    //     let len_x = self.lengths[idx_x as usize];
-    //     BoxId::new(idx_x + len_x)
-    // }
+    /// Returns the second component of a pixel
+    pub fn pixel_y_raw<'a>(&'a self, raw: RawBox<'a, PixelBox>) -> RawBox<'a, PixelBox> {
+        let x_len = raw.lengths[1] as usize;
+        let y_idx = 1 + x_len;
+        let y_len = raw.lengths[y_idx] as usize;
+        RawBox::new(
+            &raw.colors[y_idx..y_idx + y_len],
+            &raw.multiplicities[y_idx..y_idx + y_len],
+            &raw.lengths[y_idx..y_idx + y_len],
+        )
+    }
 
-    // /// Multiplies two pixels
-    // pub fn mul_pixel(
-    //     &mut self,
-    //     left: BoxId<PixelBox>,
-    //     right: BoxId<PixelBox>,
-    // ) -> Option<BoxId<PixelBox>> {
-    //     let left_y = self.pixel_y(left);
-    //     let right_x = self.pixel_x(right);
+    /// Multiplies two pixels
+    pub fn mul_pixel_raw(
+        &mut self,
+        left: RawBox<PixelBox>,
+        right: RawBox<PixelBox>,
+    ) -> Option<RawBoxOwned<PixelBox>> {
+        let left_y = self.pixel_y_raw(left);
+        let right_x = self.pixel_x_raw(right);
 
-    //     let left_y_raw = self.get_raw(left_y);
-    //     let right_x_raw = self.get_raw(right_x);
+        if left_y == right_x {
+            let left_x = self.pixel_x_raw(left);
+            let right_y = self.pixel_y_raw(right);
+            return Some(self.pixel_raw(left_x, right_y));
+        }
 
-    //     if left_y_raw == right_x_raw {
-    //         let left_x = self.pixel_x(left);
-    //         let right_y = self.pixel_y(right);
-    //         return Some(self.pixel(left_x, right_y));
-    //     }
-
-    //     None
-    // }
+        None
+    }
 
     pub fn maxel(&mut self) -> BoxId<MaxelBox> {
         todo!()
@@ -1313,41 +1345,40 @@ mod tests {
 
     #[test]
     fn test_mul() {
-        // let mut store = BoxStore::new();
-        // let two = store.from_u32(2);
-        // let three = store.from_u32(3);
-        // let six = store.mul(two, three);
-        // let expected = store.from_u32(6);
-        // assert_eq!(six, expected);
+        let mut store = BoxStore::new();
+        let two = store.from_u32(2);
+        let three = store.from_u32(3);
+        let six = store.mul(&two, &three);
+        let expected = store.from_u32(6);
+        assert_eq!(six, expected);
 
-        // let six_2 = store.mul(three, two);
-        // assert_eq!(six, six_2);
+        let six_2 = store.mul(&three, &two);
+        assert_eq!(six, six_2);
 
-        // let m_three = store.from_i32(-3);
-        // let m_six = store.mul(two, m_three);
-        // let expected = store.from_i32(-6);
-        // assert_eq!(m_six, expected);
+        let m_three = store.from_i32(-3);
+        let m_six = store.mul(&two, &m_three);
+        let expected = store.from_i32(-6);
+        assert_eq!(m_six, expected);
 
-        // let alpha = store.alpha();
-        // let alpha_2 = store.mul(alpha, alpha);
-        // let two = store.from_u32(2);
-        // let expected = store.wrap_in_box(two, Color::Black, Natural::from(1_u32));
-        // assert_eq!(alpha_2, expected);
+        let alpha = store.alpha();
+        let alpha_2 = store.mul(&alpha, &alpha);
+        let two = store.from_u32(2);
+        let expected = store.wrap_in_box(&two, Color::Black, Natural::from(1_u32));
+        assert_eq!(alpha_2, expected);
 
-        // let one = store.one();
-        // let alpha = store.alpha();
-        // let p1 = store.add(BoxState::Committed(one), BoxState::Committed(alpha));
-        // let p2 = store.add(
-        //     BoxState::Committed(one),
-        //     BoxState::Committed(store.neg_alpha()),
-        // );
-        // let prod = store.mul(BoxState::Committed(p1), BoxState::Committed(p2));
-        // let anti_two =
-        //     store.wrap_in_box::<NumBox, NumBox>(store.zero(), Color::Red, Natural::from(2_u32));
-        // let neg_alpha_2 =
-        //     store.wrap_in_box::<NumBox, PolynumBox>(anti_two, Color::Black, Natural::from(1_u32));
-        // let expected = store.add(BoxState::Committed(one), BoxState::Committed(neg_alpha_2));
-        // assert_eq!(prod, expected);
+        let one = store.one();
+        let alpha = store.alpha();
+        let p1 = store.add(&one, &alpha);
+        let p2 = store.add(&one, &store.neg_alpha());
+        let prod = store.mul(&p1, &p2);
+        let anti_two =
+            store.wrap_in_box::<NumBox, NumBox>(&store.zero(), Color::Red, Natural::from(2_u32));
+        let neg_alpha_2 =
+            store.wrap_in_box::<NumBox, PolynumBox>(&anti_two, Color::Black, Natural::from(1_u32));
+        let expected = store.add(&one, &neg_alpha_2);
+        let c1 = prod.sort_and_commit(&mut store);
+        let c2 = expected.sort_and_commit(&mut store);
+        assert_eq!(c1, c2);
     }
 
     #[test]
