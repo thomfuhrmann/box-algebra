@@ -12,6 +12,8 @@ use std::{
 
 use rapidhash::{HashMapExt, RapidHashMap, fast::RandomState};
 
+use crate::alt_model::BoxState::Uncommitted;
+
 /// Kind of boxes that can exist in a store
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 #[repr(u8)]
@@ -20,6 +22,8 @@ pub enum BoxKind {
     Num,
     Polynum,
     Multinum,
+    Unixel,
+    Vexel,
     Pixel,
     Maxel,
 }
@@ -27,14 +31,6 @@ pub enum BoxKind {
 /// Traits that describes the type of a box
 pub trait BoxType: Sized + Clone {
     const KIND: BoxKind;
-
-    /// Validates whether a raw uncommitted slice layout fits the structural constraints
-    fn validate_layout(raw: RawBox<'_, Self>) -> bool;
-
-    /// Defines whether the immediate children of this box are in a predefined order
-    fn is_ordered() -> bool {
-        false
-    }
 }
 
 pub trait Num: BoxType {}
@@ -45,20 +41,12 @@ pub trait Multinum: Polynum {}
 pub struct AnyBox;
 impl BoxType for AnyBox {
     const KIND: BoxKind = BoxKind::Box;
-
-    fn validate_layout(_raw: RawBox<'_, Self>) -> bool {
-        true
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NumBox;
 impl BoxType for NumBox {
     const KIND: BoxKind = BoxKind::Num;
-
-    fn validate_layout(_raw: RawBox<'_, Self>) -> bool {
-        todo!()
-    }
 }
 impl Num for NumBox {}
 
@@ -66,10 +54,6 @@ impl Num for NumBox {}
 pub struct PolynumBox;
 impl BoxType for PolynumBox {
     const KIND: BoxKind = BoxKind::Polynum;
-
-    fn validate_layout(_raw: RawBox<'_, Self>) -> bool {
-        todo!()
-    }
 }
 impl Num for PolynumBox {}
 impl Polynum for PolynumBox {}
@@ -78,10 +62,6 @@ impl Polynum for PolynumBox {}
 pub struct MultinumBox;
 impl BoxType for MultinumBox {
     const KIND: BoxKind = BoxKind::Multinum;
-
-    fn validate_layout(_raw: RawBox<'_, Self>) -> bool {
-        todo!()
-    }
 }
 impl Num for MultinumBox {}
 impl Polynum for MultinumBox {}
@@ -91,24 +71,24 @@ impl Multinum for MultinumBox {}
 pub struct PixelBox;
 impl BoxType for PixelBox {
     const KIND: BoxKind = BoxKind::Pixel;
-
-    fn validate_layout(_raw: RawBox<'_, Self>) -> bool {
-        todo!()
-    }
-
-    fn is_ordered() -> bool {
-        true
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MaxelBox;
 impl BoxType for MaxelBox {
     const KIND: BoxKind = BoxKind::Maxel;
+}
 
-    fn validate_layout(_raw: RawBox<'_, Self>) -> bool {
-        todo!()
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnixelBox;
+impl BoxType for UnixelBox {
+    const KIND: BoxKind = BoxKind::Unixel;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VexelBox;
+impl BoxType for VexelBox {
+    const KIND: BoxKind = BoxKind::Vexel;
 }
 
 /// Trait for defining the output type of an addition between two boxes
@@ -239,16 +219,23 @@ impl<'a, T: BoxType> RawBox<'a, T> {
     fn hash_content(&self, random_state: &RandomState) -> u64 {
         let mut hasher = random_state.build_hasher();
         T::KIND.hash(&mut hasher);
-        self.colors[1..].hash(&mut hasher);
-        self.multiplicities[1..].hash(&mut hasher);
+
+        self.colors.len().hash(&mut hasher);
+        self.multiplicities.len().hash(&mut hasher);
+
+        self.colors.get(1..).unwrap_or(&[]).hash(&mut hasher);
+        self.multiplicities
+            .get(1..)
+            .unwrap_or(&[])
+            .hash(&mut hasher);
         self.lengths.hash(&mut hasher);
         hasher.finish()
     }
 
     /// Compares box contents ignoring outer colors and multiplicities
     fn cmp_content(&self, other: &Self) -> bool {
-        let left_len = self.lengths[0] as usize;
-        let right_len = other.lengths[0] as usize;
+        let left_len = self.length() as usize;
+        let right_len = other.length() as usize;
 
         if left_len != right_len {
             return false;
@@ -267,24 +254,25 @@ impl<'a, T: BoxType> RawBox<'a, T> {
 
     /// Returns the color of the outer box
     pub fn color(&self) -> Color {
-        self.colors[0]
+        self.colors.first().copied().unwrap_or(Color::Black)
     }
 
     /// Returns the multiplicity of the outer box
-    pub fn multiplicity(&self) -> &Natural {
-        &self.multiplicities[0]
+    pub fn multiplicity(&self) -> Natural {
+        self.multiplicities
+            .first()
+            .cloned()
+            .unwrap_or(Natural::from(0_u32))
     }
 
     /// Returns the length of the outer box
     pub fn length(&self) -> u32 {
-        self.lengths[0]
+        self.lengths.first().copied().unwrap_or(0)
     }
 
-    pub fn into_iter(self) -> RawBoxIter<'a, T> {
-        RawBoxIter {
-            raw: self,
-            index: 1,
-        }
+    /// Tests if the box is an anti-box
+    pub fn is_anti(&self) -> bool {
+        self.color() == Color::Red
     }
 }
 
@@ -334,6 +322,18 @@ impl<'a, T: BoxType> Iterator for RawBoxIter<'a, T> {
     }
 }
 
+impl<'a, T: BoxType> IntoIterator for RawBox<'a, T> {
+    type Item = RawBox<'a, AnyBox>;
+    type IntoIter = RawBoxIter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        RawBoxIter {
+            raw: self,
+            index: 1,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct RawBoxOwned<T: BoxType> {
     colors: Vec<Color>,
@@ -357,6 +357,23 @@ impl<T: BoxType> RawBoxOwned<T> {
             lengths: vec![],
             _marker: PhantomData,
         }
+    }
+
+    pub fn new_with(colors: Vec<Color>, multiplicities: Vec<Natural>, lengths: Vec<u32>) -> Self {
+        Self {
+            colors,
+            multiplicities,
+            lengths,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn kind(&self) -> BoxKind {
+        T::KIND
+    }
+
+    pub fn cast<U: BoxType>(self) -> RawBoxOwned<U> {
+        RawBoxOwned::<U>::new_with(self.colors, self.multiplicities, self.lengths)
     }
 
     /// Returns a reference to the raw box data
@@ -450,6 +467,38 @@ impl<T: BoxType> RawBoxOwned<T> {
             self.multiplicities[dest_idx] = src_natural;
         }
     }
+
+    pub fn append_raw<U: BoxType>(&mut self, raw: RawBox<U>) {
+        self.lengths[0] += raw.length();
+        self.colors.extend_from_slice(raw.colors);
+        self.multiplicities.extend_from_slice(raw.multiplicities);
+        self.lengths.extend_from_slice(raw.lengths);
+    }
+
+    pub fn append_raw_owned<U: BoxType>(&mut self, raw: RawBoxOwned<U>) {
+        self.lengths[0] += raw.length();
+        self.colors.extend(raw.colors);
+        self.multiplicities.extend(raw.multiplicities);
+        self.lengths.extend(raw.lengths);
+    }
+
+    /// Returns the color of the outer box
+    pub fn color(&self) -> Color {
+        self.colors.first().copied().unwrap_or(Color::Black)
+    }
+
+    /// Returns the multiplicity of the outer box
+    pub fn multiplicity(&self) -> Natural {
+        self.multiplicities
+            .first()
+            .cloned()
+            .unwrap_or(Natural::from(0_u32))
+    }
+
+    /// Returns the length of the outer box
+    pub fn length(&self) -> u32 {
+        self.lengths.first().copied().unwrap_or(0)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -461,14 +510,6 @@ pub enum BoxState<T: BoxType> {
 }
 
 impl<T: BoxType> BoxState<T> {
-    pub fn new_uncommitted() -> Self {
-        BoxState::Uncommitted(RawBoxOwned::new())
-    }
-
-    pub fn new_committed(box_id: BoxId<T>) -> Self {
-        BoxState::Committed(box_id)
-    }
-
     pub fn as_raw<'a>(&'a self, store: &'a BoxStore) -> RawBox<'a, T> {
         match self {
             BoxState::Uncommitted(owned) => owned.as_raw(),
@@ -579,72 +620,90 @@ impl BoxStore {
         let mut multiplicities = Vec::with_capacity(BOX_STORE_CAPACITY);
         let mut lengths = Vec::with_capacity(BOX_STORE_CAPACITY);
 
-        let mut register_box = |kind: BoxKind, hash: u64, raw_box: RawBox<'_, AnyBox>| {
+        let mut register_box = |kind: BoxKind, hash: u64, raw_box: RawBoxOwned<AnyBox>| {
             let index = lengths.len() as u32;
             let id = BoxId::<AnyBox>::new(index);
-            // Commit data
+
             cache.insert(hash, id);
             kinds.push(kind);
 
-            colors.extend_from_slice(raw_box.colors);
-            multiplicities.extend_from_slice(raw_box.multiplicities);
-            lengths.extend_from_slice(raw_box.lengths);
+            colors.extend(raw_box.colors);
+            multiplicities.extend(raw_box.multiplicities);
+            lengths.extend(raw_box.lengths);
             index
         };
 
-        let mult = [Natural::from(1_u32)];
-        let raw_zero = RawBox::<NumBox>::new(&[Color::Black], &mult, &[1]);
+        let raw_zero = RawBoxOwned::<NumBox>::new_with(
+            vec![Color::Black],
+            vec![Natural::from(1_u32)],
+            vec![1],
+        );
         let zero_id = BoxId::<NumBox>::new(register_box(
             raw_zero.kind(),
             raw_zero.hash(&random_state),
             raw_zero.cast(),
         ));
 
-        let raw_anti_zero = RawBox::<NumBox>::new(&[Color::Red], &mult, &[1]);
+        let raw_anti_zero =
+            RawBoxOwned::<NumBox>::new_with(vec![Color::Red], vec![Natural::from(1_u32)], vec![1]);
         let anti_zero_id = BoxId::<NumBox>::new(register_box(
             raw_anti_zero.kind(),
             raw_anti_zero.hash(&random_state),
             raw_anti_zero.cast(),
         ));
 
-        let mult = [Natural::from(1_u32), Natural::from(1_u32)];
-        let raw_one = RawBox::<NumBox>::new(&[Color::Black, Color::Black], &mult, &[2, 1]);
+        let raw_one = RawBoxOwned::<NumBox>::new_with(
+            vec![Color::Black, Color::Black],
+            vec![Natural::from(1_u32), Natural::from(1_u32)],
+            vec![2, 1],
+        );
         let one_id = BoxId::<NumBox>::new(register_box(
             raw_one.kind(),
             raw_one.hash(&random_state),
             raw_one.cast(),
         ));
 
-        let raw_neg_one = RawBox::<NumBox>::new(&[Color::Black, Color::Red], &mult, &[2, 1]);
+        let raw_neg_one = RawBoxOwned::<NumBox>::new_with(
+            vec![Color::Black, Color::Red],
+            vec![Natural::from(1_u32), Natural::from(1_u32)],
+            vec![2, 1],
+        );
         let neg_one_id = BoxId::<NumBox>::new(register_box(
             raw_neg_one.kind(),
             raw_neg_one.hash(&random_state),
             raw_neg_one.cast(),
         ));
 
-        let raw_anti_one = RawBox::<NumBox>::new(&[Color::Red, Color::Black], &mult, &[2, 1]);
+        let raw_anti_one = RawBoxOwned::<NumBox>::new_with(
+            vec![Color::Red, Color::Black],
+            vec![Natural::from(1_u32), Natural::from(1_u32)],
+            vec![2, 1],
+        );
         let anti_one_id = BoxId::<NumBox>::new(register_box(
             raw_anti_one.kind(),
             raw_anti_one.hash(&random_state),
             raw_anti_one.cast(),
         ));
 
-        let raw_anti_neg_one = RawBox::<NumBox>::new(&[Color::Red, Color::Red], &mult, &[2, 1]);
+        let raw_anti_neg_one = RawBoxOwned::<NumBox>::new_with(
+            vec![Color::Red, Color::Red],
+            vec![Natural::from(1_u32), Natural::from(1_u32)],
+            vec![2, 1],
+        );
         let anti_neg_one_id = BoxId::<NumBox>::new(register_box(
             raw_anti_neg_one.kind(),
             raw_anti_neg_one.hash(&random_state),
             raw_anti_neg_one.cast(),
         ));
 
-        let mult = [
-            Natural::from(1_u32),
-            Natural::from(1_u32),
-            Natural::from(1_u32),
-        ];
-        let raw_alpha = RawBox::<PolynumBox>::new(
-            &[Color::Black, Color::Black, Color::Black],
-            &mult,
-            &[3, 2, 1],
+        let raw_alpha = RawBoxOwned::<PolynumBox>::new_with(
+            vec![Color::Black, Color::Black, Color::Black],
+            vec![
+                Natural::from(1_u32),
+                Natural::from(1_u32),
+                Natural::from(1_u32),
+            ],
+            vec![3, 2, 1],
         );
         let alpha_id = BoxId::<PolynumBox>::new(register_box(
             raw_alpha.kind(),
@@ -652,24 +711,45 @@ impl BoxStore {
             raw_alpha.cast(),
         ));
 
-        let raw_neg_alpha =
-            RawBox::<PolynumBox>::new(&[Color::Black, Color::Red, Color::Black], &mult, &[3, 2, 1]);
+        let raw_neg_alpha = RawBoxOwned::<PolynumBox>::new_with(
+            vec![Color::Black, Color::Red, Color::Black],
+            vec![
+                Natural::from(1_u32),
+                Natural::from(1_u32),
+                Natural::from(1_u32),
+            ],
+            vec![3, 2, 1],
+        );
         let neg_alpha_id = BoxId::<PolynumBox>::new(register_box(
             raw_neg_alpha.kind(),
             raw_neg_alpha.hash(&random_state),
             raw_neg_alpha.cast(),
         ));
 
-        let raw_anti_alpha =
-            RawBox::<PolynumBox>::new(&[Color::Red, Color::Black, Color::Black], &mult, &[3, 2, 1]);
+        let raw_anti_alpha = RawBoxOwned::<PolynumBox>::new_with(
+            vec![Color::Red, Color::Black, Color::Black],
+            vec![
+                Natural::from(1_u32),
+                Natural::from(1_u32),
+                Natural::from(1_u32),
+            ],
+            vec![3, 2, 1],
+        );
         let anti_alpha_id = BoxId::<PolynumBox>::new(register_box(
             raw_anti_alpha.kind(),
             raw_anti_alpha.hash(&random_state),
             raw_anti_alpha.cast(),
         ));
 
-        let raw_anti_neg_alpha =
-            RawBox::<PolynumBox>::new(&[Color::Red, Color::Red, Color::Black], &mult, &[3, 2, 1]);
+        let raw_anti_neg_alpha = RawBoxOwned::<PolynumBox>::new_with(
+            vec![Color::Red, Color::Red, Color::Black],
+            vec![
+                Natural::from(1_u32),
+                Natural::from(1_u32),
+                Natural::from(1_u32),
+            ],
+            vec![3, 2, 1],
+        );
         let anti_neg_alpha_id = BoxId::<PolynumBox>::new(register_box(
             raw_anti_neg_alpha.kind(),
             raw_anti_neg_alpha.hash(&random_state),
@@ -788,13 +868,12 @@ impl BoxStore {
     }
 
     /// Wraps an existing expression in a new box container
-    pub fn wrap_in_box<T: BoxType, U: BoxType>(
-        &mut self,
-        source: &BoxState<T>,
+    pub fn wrap_in_box_raw<T: BoxType, U: BoxType>(
+        &self,
+        raw: RawBox<'_, T>,
         color: Color,
         multiplicity: Natural,
-    ) -> BoxState<U> {
-        let raw = source.as_raw(self);
+    ) -> RawBoxOwned<U> {
         let source_len = raw.length();
 
         let mut result = RawBoxOwned::<U>::new();
@@ -802,31 +881,45 @@ impl BoxStore {
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1 + source_len);
 
-        // copy source elements
-        for i in 0..source_len as usize {
-            result.colors.push(raw.colors[i]);
+        result.colors.push(raw.color());
+        result.multiplicities.push(multiplicity);
+        result.lengths.push(source_len);
 
-            if i == 0 {
-                result.multiplicities.push(multiplicity.clone());
-            } else {
-                result.multiplicities.push(raw.multiplicities[i].clone());
-            }
-
-            result.lengths.push(raw.lengths[i]);
+        if source_len > 1 {
+            result.colors.extend_from_slice(&raw.colors[1..]);
+            result
+                .multiplicities
+                .extend_from_slice(&raw.multiplicities[1..]);
+            result.lengths.extend_from_slice(&raw.lengths[1..]);
         }
 
-        BoxState::Uncommitted(result)
+        result
     }
 
-    pub fn from_u32(&mut self, num: u32) -> BoxState<NumBox> {
+    pub fn wrap_in_box<T: BoxType, U: BoxType>(
+        &self,
+        source: &BoxState<T>,
+        color: Color,
+        multiplicity: Natural,
+    ) -> BoxState<U> {
+        let raw = source.as_raw(self);
+        Uncommitted(self.wrap_in_box_raw(raw, color, multiplicity))
+    }
+
+    pub fn from_u32_raw(&self, num: u32) -> RawBoxOwned<NumBox> {
+        let zero_raw = self.get_raw(self.constants.zero);
+        self.wrap_in_box_raw(zero_raw, Color::Black, Natural::from(num))
+    }
+
+    pub fn from_u32(&self, num: u32) -> BoxState<NumBox> {
+        Uncommitted(self.from_u32_raw(num))
+    }
+
+    pub fn from_u64(&self, num: u64) -> BoxState<NumBox> {
         self.wrap_in_box(&self.zero(), Color::Black, Natural::from(num))
     }
 
-    pub fn from_u64(&mut self, num: u64) -> BoxState<NumBox> {
-        self.wrap_in_box(&self.zero(), Color::Black, Natural::from(num))
-    }
-
-    pub fn from_i32(&mut self, num: i32) -> BoxState<NumBox> {
+    pub fn from_i32(&self, num: i32) -> BoxState<NumBox> {
         if num < 0 {
             self.wrap_in_box(
                 &self.anti_zero(),
@@ -842,7 +935,7 @@ impl BoxStore {
         }
     }
 
-    pub fn from_i64(&mut self, num: i64) -> BoxState<NumBox> {
+    pub fn from_i64(&self, num: i64) -> BoxState<NumBox> {
         if num < 0 {
             self.wrap_in_box(
                 &self.anti_zero(),
@@ -913,7 +1006,7 @@ impl BoxStore {
         raw_box: RawBox<'a, AnyBox>,
         unique_children: &mut RapidHashMap<u64, (RawBox<'a, AnyBox>, Color, Natural)>,
     ) {
-        for child_raw in raw_box.into_iter() {
+        for child_raw in raw_box {
             let child_col = child_raw.color();
             let child_mul = child_raw.multiplicity();
             let struct_hash = child_raw.hash_content(&self.random_state);
@@ -922,7 +1015,7 @@ impl BoxStore {
                 && child_raw.cmp_content(other_raw)
             {
                 if child_col + *other_col == Color::Red {
-                    if child_mul < other_mul {
+                    if child_mul < *other_mul {
                         other_mul.saturating_sub_assign(child_mul);
                     } else {
                         *other_mul = child_mul.saturating_sub(other_mul.clone());
@@ -932,13 +1025,13 @@ impl BoxStore {
                     *other_mul += child_mul;
                 }
             } else {
-                unique_children.insert(struct_hash, (child_raw, child_col, child_mul.clone()));
+                unique_children.insert(struct_hash, (child_raw, child_col, child_mul));
             }
         }
     }
 
     /// Internal helper that does not commit to the store
-    fn add_raw<L, R>(
+    pub fn add_raw<L, R>(
         &self,
         lhs: RawBox<'_, L>,
         rhs: RawBox<'_, R>,
@@ -967,24 +1060,24 @@ impl BoxStore {
                 continue;
             }
 
-            let len = curr_raw.length() as usize;
-            for i in 0..len {
-                if i == 0 {
-                    result.colors.push(*curr_col);
-                    result.multiplicities.push(curr_mul.clone());
-                } else {
-                    result.colors.push(curr_raw.colors[i]);
-                    result
-                        .multiplicities
-                        .push(curr_raw.multiplicities[i].clone());
-                }
+            let len = curr_raw.length();
+            result.colors.push(*curr_col);
+            result.multiplicities.push(curr_mul.clone());
+            result.lengths.push(len);
 
-                result.lengths.push(curr_raw.lengths[i]);
-                written_len += 1;
+            if len > 1 {
+                result.colors.extend_from_slice(&curr_raw.colors[1..]);
+                result
+                    .multiplicities
+                    .extend_from_slice(&curr_raw.multiplicities[1..]);
+                result.lengths.extend_from_slice(&curr_raw.lengths[1..]);
             }
+
+            written_len += len;
         }
 
-        result.lengths[0] = (1 + written_len) as u32;
+        result.lengths[0] = 1 + written_len;
+        result.sort_immediate_children();
         result
     }
 
@@ -1000,7 +1093,7 @@ impl BoxStore {
         BoxState::Uncommitted(result)
     }
 
-    fn mul_raw<L, R>(
+    pub fn mul_raw<L, R>(
         &self,
         lhs_raw: RawBox<'_, L>,
         rhs_raw: RawBox<'_, R>,
@@ -1015,14 +1108,13 @@ impl BoxStore {
         let lhs_col = lhs_raw.color();
         let rhs_col = rhs_raw.color();
 
-        for left_child in lhs_raw.into_iter() {
-            for right_child in rhs_raw.clone().into_iter() {
+        for left_child in lhs_raw {
+            for right_child in rhs_raw.clone() {
                 let left_mul = left_child.multiplicity();
                 let right_mul = right_child.multiplicity();
                 let curr_mul = left_mul * right_mul;
 
                 let mut curr_owned = self.add_raw(left_child, right_child);
-                curr_owned.sort_immediate_children();
 
                 let curr_col = curr_owned.colors[0];
                 let struct_hash = curr_owned.hash_content(&self.random_state);
@@ -1054,32 +1146,20 @@ impl BoxStore {
         result.lengths.push(0);
 
         let mut written_len = 0;
-        for raw_box in unique_children.values() {
-            let mul = raw_box.multiplicities[0].clone();
+        for raw_box in unique_children.into_values() {
+            let mul = raw_box.multiplicity();
             if mul == 0 {
                 continue;
             }
 
-            let len = raw_box.lengths[0] as usize;
-            let col = raw_box.colors[0];
-            for i in 0..len {
-                if i == 0 {
-                    result.colors.push(col);
-                    result.multiplicities.push(mul.clone());
-                } else {
-                    result.colors.push(raw_box.colors[i]);
-                    result
-                        .multiplicities
-                        .push(raw_box.multiplicities[i].clone());
-                }
-
-                result.lengths.push(raw_box.lengths[i]);
-                written_len += 1;
-            }
+            written_len += raw_box.length();
+            result.colors.extend(raw_box.colors);
+            result.multiplicities.extend(raw_box.multiplicities);
+            result.lengths.extend(raw_box.lengths);
         }
 
-        result.lengths[0] = (1 + written_len) as u32;
-
+        result.lengths[0] = 1 + written_len;
+        result.sort_immediate_children();
         result
     }
 
@@ -1096,10 +1176,10 @@ impl BoxStore {
     }
 
     /// Instantiates a pixel given two boxes
-    pub fn pixel_raw<T: BoxType>(
+    pub fn pixel_raw<T: BoxType, U: BoxType>(
         &self,
         x_raw: RawBox<'_, T>,
-        y_raw: RawBox<'_, T>,
+        y_raw: RawBox<'_, U>,
     ) -> RawBoxOwned<PixelBox> {
         let x_len = x_raw.length();
         let y_len = y_raw.length();
@@ -1109,7 +1189,6 @@ impl BoxStore {
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1 + x_len + y_len);
 
-        // copy source elements
         result.colors.extend_from_slice(x_raw.colors);
         result
             .multiplicities
@@ -1123,6 +1202,17 @@ impl BoxStore {
         result.lengths.extend_from_slice(y_raw.lengths);
 
         result
+    }
+
+    /// Returns a pixel
+    pub fn pixel<T: BoxType, U: BoxType>(
+        &self,
+        x: BoxState<T>,
+        y: BoxState<U>,
+    ) -> BoxState<PixelBox> {
+        let x_raw = x.as_raw(self);
+        let y_raw = y.as_raw(self);
+        BoxState::Uncommitted(self.pixel_raw(x_raw, y_raw))
     }
 
     /// Returns the first component of a pixel
@@ -1149,7 +1239,7 @@ impl BoxStore {
 
     /// Multiplies two pixels
     pub fn mul_pixel_raw(
-        &mut self,
+        &self,
         left: RawBox<PixelBox>,
         right: RawBox<PixelBox>,
     ) -> Option<RawBoxOwned<PixelBox>> {
@@ -1165,28 +1255,142 @@ impl BoxStore {
         None
     }
 
-    pub fn maxel(&mut self) -> BoxId<MaxelBox> {
-        todo!()
+    pub fn mul_pixel(
+        &self,
+        left: &BoxState<PixelBox>,
+        right: &BoxState<PixelBox>,
+    ) -> Option<BoxState<PixelBox>> {
+        let left_raw = left.as_raw(self);
+        let right_raw = right.as_raw(self);
+        let result = self.mul_pixel_raw(left_raw, right_raw);
+        result.map(BoxState::Uncommitted)
+    }
+
+    pub fn mul_maxel_raw(
+        &self,
+        left: RawBox<MaxelBox>,
+        right: RawBox<MaxelBox>,
+    ) -> RawBoxOwned<MaxelBox> {
+        let mut result = RawBoxOwned::<MaxelBox>::new();
+        result.colors.push(Color::Black);
+        result.multiplicities.push(Natural::from(1_u32));
+        result.lengths.push(1);
+        for left_pix in left {
+            for right_pix in right {
+                if let Some(mul) =
+                    self.mul_pixel_raw(left_pix.cast::<PixelBox>(), right_pix.cast::<PixelBox>())
+                {
+                    result.append_raw_owned(mul);
+                }
+            }
+        }
+        result.sort_immediate_children();
+        result
+    }
+
+    pub fn mul_maxel(
+        &self,
+        left: &BoxState<MaxelBox>,
+        right: &BoxState<MaxelBox>,
+    ) -> BoxState<MaxelBox> {
+        let left_raw = left.as_raw(self);
+        let right_raw = right.as_raw(self);
+        let raw_result = self.mul_maxel_raw(left_raw, right_raw);
+        BoxState::Uncommitted(raw_result)
+    }
+
+    pub fn unixel_raw<T: BoxType>(&self, x_raw: RawBox<T>) -> RawBoxOwned<UnixelBox> {
+        let x_len = x_raw.length();
+
+        let mut result = RawBoxOwned::<UnixelBox>::new();
+        result.colors.push(Color::Black);
+        result.multiplicities.push(Natural::from(1_u32));
+        result.lengths.push(1 + x_len);
+
+        result.colors.extend_from_slice(x_raw.colors);
+        result
+            .multiplicities
+            .extend_from_slice(x_raw.multiplicities);
+        result.lengths.extend_from_slice(x_raw.lengths);
+
+        result
+    }
+
+    pub fn unixel<T: BoxType>(&self, x: BoxState<T>) -> BoxState<UnixelBox> {
+        let x_raw = x.as_raw(self);
+        Uncommitted(self.unixel_raw(x_raw))
+    }
+}
+
+pub trait IntoBoxState<T: BoxType>: Sized {
+    fn into_box_state(self, store: &BoxStore) -> BoxState<T>;
+}
+
+impl<T: BoxType> IntoBoxState<T> for BoxState<T> {
+    fn into_box_state(self, _store: &BoxStore) -> BoxState<T> {
+        self
+    }
+}
+
+impl IntoBoxState<NumBox> for u32 {
+    fn into_box_state(self, store: &BoxStore) -> BoxState<NumBox> {
+        store.from_u32(self)
+    }
+}
+
+impl IntoBoxState<NumBox> for u64 {
+    fn into_box_state(self, store: &BoxStore) -> BoxState<NumBox> {
+        store.from_u64(self)
+    }
+}
+
+impl IntoBoxState<NumBox> for i32 {
+    fn into_box_state(self, store: &BoxStore) -> BoxState<NumBox> {
+        store.from_i32(self)
+    }
+}
+
+impl IntoBoxState<NumBox> for i64 {
+    fn into_box_state(self, store: &BoxStore) -> BoxState<NumBox> {
+        store.from_i64(self)
     }
 }
 
 #[macro_export]
-macro_rules! pixel_alt {
-    ($store:expr, $x:expr, $y:expr) => {
-        $store::pixel($x, $y)
+macro_rules! into_pixel {
+    ($store:expr, $x:expr, $y:expr) => {{ $store.pixel($x.into_box_state($store), $y.into_box_state($store)) }};
+}
+
+#[macro_export]
+macro_rules! into_maxel {
+    ($store:expr, $([$x:expr, $y:expr]),* $(,)?) => {
+        {
+            let mut result = $crate::alt_model::RawBoxOwned::<MaxelBox>::new();
+            result.colors.push(Color::Black);
+            result.multiplicities.push(Natural::from(1_u32));
+            result.lengths.push(1);
+            $(
+                let pix = $store.pixel(($x).into_box_state($store), ($y).into_box_state($store));
+                result.append_raw(pix.as_raw($store));
+            )*
+            result
+        }
     };
 }
 
 #[macro_export]
-macro_rules! maxel_alt {
-    ($store:ident, $([$x:expr, $y:expr]),* $(,)?) => {
+macro_rules! into_vexel {
+    ($store:expr, [$($x:expr),* $(,)?]) => {
         {
-            let mut outer_box = $crate::MBox::new();
+            let mut result = $crate::alt_model::RawBoxOwned::<VexelBox>::new();
+            result.colors.push(Color::Black);
+            result.multiplicities.push(Natural::from(1_u32));
+            result.lengths.push(1);
             $(
-                let pix = $store::pixel(($x).into(), ($y).into());
-                outer_box.insert_box(pix);
+                let unix = $store.unixel(($x).into_box_state($store));
+                result.append_raw(unix.as_raw($store));
             )*
-            outer_box
+            result
         }
     };
 }
@@ -1250,7 +1454,7 @@ mod tests {
             Natural::from(1_u32),
         );
         let zero = store.add(&minus_one, &store.one());
-        let zero_comm = zero.sort_and_commit(&mut store);
+        let zero_comm = zero.commit(&mut store);
         assert_eq!(zero_comm, store.constants.zero);
 
         let two = store.from_u32(2);
@@ -1292,14 +1496,12 @@ mod tests {
         let alpha = store.alpha();
         let sum_1 = store.add(&one, &alpha);
         let sum_2 = store.add(&alpha, &one);
-        let s1_c = sum_1.sort_and_commit(&mut store);
-        let s2_c = sum_2.sort_and_commit(&mut store);
-        assert_eq!(s1_c, s2_c);
+        assert_eq!(sum_1, sum_2);
     }
 
     #[test]
     fn test_mul() {
-        let mut store = BoxStore::new();
+        let store = BoxStore::new();
         let two = store.from_u32(2);
         let three = store.from_u32(3);
         let six = store.mul(&two, &three);
@@ -1330,29 +1532,41 @@ mod tests {
         let neg_alpha_2 =
             store.wrap_in_box::<NumBox, PolynumBox>(&anti_two, Color::Black, Natural::from(1_u32));
         let expected = store.add(&one, &neg_alpha_2);
-        let c1 = prod.sort_and_commit(&mut store);
-        let c2 = expected.sort_and_commit(&mut store);
-        assert_eq!(c1, c2);
+        assert_eq!(prod, expected);
     }
 
     #[test]
     fn test_pixel() {
-        // let mut store = BoxStore::new();
+        let store = BoxStore::new();
 
-        // let one = store.one(); let two = store.from_u32(2);
-        // let three = store.from_u32(3);
+        let p1 = into_pixel!(&store, 1, 2);
+        let p2 = into_pixel!(&store, 2, 3);
+        let p3 = store.mul_pixel(&p1, &p2);
+        let expected = into_pixel!(&store, 1, 3);
 
-        // let p1 = store.pixel(one, two);
+        assert_eq!(p3, Some(expected));
 
-        // let p2 = store.pixel(two, three);
+        let p4 = into_pixel!(&store, 3, 2);
+        let p5 = store.mul_pixel(&p1, &p4);
+        assert!(p5.is_none());
+    }
 
-        // let p3 = store.mul_pixel(p1, p2);
-        // let expected = store.pixel(one, three);
+    #[test]
+    fn test_maxel() {
+        let store = BoxStore::new();
+        let a = into_maxel![&store, [1, 1], [1, 2], [2, 2]];
+        let b = into_maxel![&store, [1, 2], [2, 1]];
 
-        // assert_eq!(p3, Some(expected));
+        let prod = store.mul_maxel_raw(a.as_raw(), b.as_raw());
+        let expected = into_maxel![&store, [1, 1], [1, 2], [2, 1]];
+        assert_eq!(prod, expected);
+    }
 
-        // let p4 = store.pixel(three, two);
-        // let p5 = store.mul_pixel(p1, p4);
-        // assert!(p5.is_none());
+    #[test]
+    fn test_vexel() {
+        let store = BoxStore::new();
+        let v = into_vexel!(&store, [4, 2, 3]);
+        let v_raw = v.as_raw();
+        println!("{v_raw:#}");
     }
 }

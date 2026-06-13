@@ -25,6 +25,7 @@ mod list;
 pub mod polynumber;
 pub mod alt_model;
 pub mod derivative;
+pub mod display_alt;
 mod ord;
 pub mod ordered_set;
 pub mod set;
