@@ -23,9 +23,10 @@ pub mod function;
 mod list;
 #[macro_use]
 pub mod polynumber;
-pub mod alt_model;
 pub mod derivative;
+pub mod derivative_alt;
 pub mod display_alt;
+pub mod lib_alt;
 mod ord;
 pub mod ordered_set;
 pub mod set;

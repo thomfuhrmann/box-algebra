@@ -1,7 +1,4 @@
-use malachite::{
-    Natural,
-    base::num::arithmetic::traits::{SaturatingSub, SaturatingSubAssign},
-};
+use malachite::{Natural, base::num::arithmetic::traits::SaturatingSub};
 
 use std::{
     cmp::Ordering::Equal,
@@ -12,7 +9,7 @@ use std::{
 
 use rapidhash::{HashMapExt, RapidHashMap, fast::RandomState};
 
-use crate::alt_model::BoxState::Uncommitted;
+use crate::lib_alt::BoxState::Uncommitted;
 
 /// Kind of boxes that can exist in a store
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -234,8 +231,8 @@ impl<'a, T: BoxType> RawBox<'a, T> {
 
     /// Compares box contents ignoring outer colors and multiplicities
     fn cmp_content(&self, other: &Self) -> bool {
-        let left_len = self.length() as usize;
-        let right_len = other.length() as usize;
+        let left_len = self.length(0) as usize;
+        let right_len = other.length(0) as usize;
 
         if left_len != right_len {
             return false;
@@ -252,27 +249,27 @@ impl<'a, T: BoxType> RawBox<'a, T> {
             && self.lengths[left_range.clone()] == other.lengths[right_range.clone()]
     }
 
-    /// Returns the color of the outer box
-    pub fn color(&self) -> Color {
-        self.colors.first().copied().unwrap_or(Color::Black)
+    /// Returns the k-th color
+    pub fn color(&self, index: usize) -> Color {
+        self.colors.get(index).copied().unwrap_or(Color::Black)
     }
 
-    /// Returns the multiplicity of the outer box
-    pub fn multiplicity(&self) -> Natural {
+    /// Returns the k-th multiplicity
+    pub fn multiplicity(&self, index: usize) -> Natural {
         self.multiplicities
-            .first()
+            .get(index)
             .cloned()
             .unwrap_or(Natural::from(0_u32))
     }
 
-    /// Returns the length of the outer box
-    pub fn length(&self) -> u32 {
-        self.lengths.first().copied().unwrap_or(0)
+    /// Returns the k-th length
+    pub fn length(&self, index: usize) -> u32 {
+        self.lengths.get(index).copied().unwrap_or(0)
     }
 
     /// Tests if the box is an anti-box
     pub fn is_anti(&self) -> bool {
-        self.color() == Color::Red
+        self.color(0) == Color::Red
     }
 }
 
@@ -306,7 +303,7 @@ impl<'a, T: BoxType> Iterator for RawBoxIter<'a, T> {
     type Item = RawBox<'a, AnyBox>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let total_len = self.raw.length() as usize;
+        let total_len = self.raw.length(0) as usize;
         if self.index < total_len {
             let child_idx = self.index;
             let child_len = self.raw.lengths[self.index] as usize;
@@ -336,9 +333,9 @@ impl<'a, T: BoxType> IntoIterator for RawBox<'a, T> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct RawBoxOwned<T: BoxType> {
-    colors: Vec<Color>,
-    multiplicities: Vec<Natural>,
-    lengths: Vec<u32>,
+    pub(crate) colors: Vec<Color>,
+    pub(crate) multiplicities: Vec<Natural>,
+    pub(crate) lengths: Vec<u32>,
     _marker: PhantomData<T>,
 }
 
@@ -468,36 +465,70 @@ impl<T: BoxType> RawBoxOwned<T> {
         }
     }
 
-    pub fn append_raw<U: BoxType>(&mut self, raw: RawBox<U>) {
-        self.lengths[0] += raw.length();
-        self.colors.extend_from_slice(raw.colors);
-        self.multiplicities.extend_from_slice(raw.multiplicities);
-        self.lengths.extend_from_slice(raw.lengths);
-    }
-
-    pub fn append_raw_owned<U: BoxType>(&mut self, raw: RawBoxOwned<U>) {
-        self.lengths[0] += raw.length();
+    pub fn append_owned<U: BoxType>(&mut self, raw: RawBoxOwned<U>) {
+        if let Some(len) = self.lengths.get_mut(0) {
+            *len += raw.length(0);
+        }
         self.colors.extend(raw.colors);
         self.multiplicities.extend(raw.multiplicities);
         self.lengths.extend(raw.lengths);
     }
 
-    /// Returns the color of the outer box
-    pub fn color(&self) -> Color {
-        self.colors.first().copied().unwrap_or(Color::Black)
+    /// Returns the k-th color
+    pub fn color(&self, index: usize) -> Color {
+        self.colors.get(index).copied().unwrap_or(Color::Black)
     }
 
-    /// Returns the multiplicity of the outer box
-    pub fn multiplicity(&self) -> Natural {
+    /// Returns the k-th multiplicity
+    pub fn multiplicity(&self, index: usize) -> Natural {
         self.multiplicities
-            .first()
+            .get(index)
             .cloned()
             .unwrap_or(Natural::from(0_u32))
     }
 
     /// Returns the length of the outer box
-    pub fn length(&self) -> u32 {
-        self.lengths.first().copied().unwrap_or(0)
+    pub fn length(&self, index: usize) -> u32 {
+        self.lengths.get(index).copied().unwrap_or(0)
+    }
+
+    /// Sets the k-th color
+    pub fn set_color(&mut self, col: Color, index: usize) {
+        if let Some(curr_col) = self.colors.get_mut(index) {
+            *curr_col = col;
+        }
+    }
+
+    /// Sets the k-th multiplicity
+    pub fn set_multiplicity(&mut self, mult: Natural, index: usize) {
+        if let Some(curr_mult) = self.multiplicities.get_mut(index) {
+            *curr_mult = mult;
+        }
+    }
+
+    /// Sets the k-th length
+    pub fn set_length(&mut self, len: u32, index: usize) {
+        if let Some(curr_len) = self.lengths.get_mut(index) {
+            *curr_len = len;
+        }
+    }
+
+    /// Removes the k-th row (without adjusting the lengths)
+    pub fn remove(&mut self, index: usize) {
+        self.colors.remove(index);
+        self.multiplicities.remove(index);
+        self.lengths.remove(index);
+    }
+}
+
+impl<T: BoxType> From<RawBox<'_, T>> for RawBoxOwned<T> {
+    fn from(value: RawBox<'_, T>) -> Self {
+        Self {
+            colors: Vec::from(value.colors),
+            multiplicities: Vec::from(value.multiplicities),
+            lengths: Vec::from(value.lengths),
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -539,6 +570,15 @@ pub enum Color {
     Red,
 }
 
+impl Color {
+    pub fn invert(self) -> Self {
+        match self {
+            Color::Black => Color::Red,
+            Color::Red => Color::Black,
+        }
+    }
+}
+
 impl Add<Color> for Color {
     type Output = Color;
 
@@ -571,12 +611,7 @@ pub struct BoxConstants {
     pub anti_zero: BoxId<NumBox>,
     pub one: BoxId<NumBox>,
     pub neg_one: BoxId<NumBox>,
-    pub anti_one: BoxId<NumBox>,
-    pub anti_neg_one: BoxId<NumBox>,
     pub alpha: BoxId<PolynumBox>,
-    pub neg_alpha: BoxId<PolynumBox>,
-    pub anti_alpha: BoxId<PolynumBox>,
-    pub anti_neg_alpha: BoxId<PolynumBox>,
 }
 
 /// Global store for box computations
@@ -633,70 +668,48 @@ impl BoxStore {
             index
         };
 
-        let raw_zero = RawBoxOwned::<NumBox>::new_with(
+        let raw = RawBoxOwned::<NumBox>::new_with(
             vec![Color::Black],
             vec![Natural::from(1_u32)],
             vec![1],
         );
-        let zero_id = BoxId::<NumBox>::new(register_box(
-            raw_zero.kind(),
-            raw_zero.hash(&random_state),
-            raw_zero.cast(),
+        let zero: BoxId<NumBox> = BoxId::<NumBox>::new(register_box(
+            raw.kind(),
+            raw.hash(&random_state),
+            raw.cast(),
         ));
 
-        let raw_anti_zero =
+        let raw =
             RawBoxOwned::<NumBox>::new_with(vec![Color::Red], vec![Natural::from(1_u32)], vec![1]);
-        let anti_zero_id = BoxId::<NumBox>::new(register_box(
-            raw_anti_zero.kind(),
-            raw_anti_zero.hash(&random_state),
-            raw_anti_zero.cast(),
+        let anti_zero: BoxId<NumBox> = BoxId::<NumBox>::new(register_box(
+            raw.kind(),
+            raw.hash(&random_state),
+            raw.cast(),
         ));
 
-        let raw_one = RawBoxOwned::<NumBox>::new_with(
+        let raw = RawBoxOwned::<NumBox>::new_with(
             vec![Color::Black, Color::Black],
             vec![Natural::from(1_u32), Natural::from(1_u32)],
             vec![2, 1],
         );
-        let one_id = BoxId::<NumBox>::new(register_box(
-            raw_one.kind(),
-            raw_one.hash(&random_state),
-            raw_one.cast(),
+        let one = BoxId::<NumBox>::new(register_box(
+            raw.kind(),
+            raw.hash(&random_state),
+            raw.cast(),
         ));
 
-        let raw_neg_one = RawBoxOwned::<NumBox>::new_with(
+        let raw = RawBoxOwned::<NumBox>::new_with(
             vec![Color::Black, Color::Red],
             vec![Natural::from(1_u32), Natural::from(1_u32)],
             vec![2, 1],
         );
-        let neg_one_id = BoxId::<NumBox>::new(register_box(
-            raw_neg_one.kind(),
-            raw_neg_one.hash(&random_state),
-            raw_neg_one.cast(),
+        let neg_one = BoxId::<NumBox>::new(register_box(
+            raw.kind(),
+            raw.hash(&random_state),
+            raw.cast(),
         ));
 
-        let raw_anti_one = RawBoxOwned::<NumBox>::new_with(
-            vec![Color::Red, Color::Black],
-            vec![Natural::from(1_u32), Natural::from(1_u32)],
-            vec![2, 1],
-        );
-        let anti_one_id = BoxId::<NumBox>::new(register_box(
-            raw_anti_one.kind(),
-            raw_anti_one.hash(&random_state),
-            raw_anti_one.cast(),
-        ));
-
-        let raw_anti_neg_one = RawBoxOwned::<NumBox>::new_with(
-            vec![Color::Red, Color::Red],
-            vec![Natural::from(1_u32), Natural::from(1_u32)],
-            vec![2, 1],
-        );
-        let anti_neg_one_id = BoxId::<NumBox>::new(register_box(
-            raw_anti_neg_one.kind(),
-            raw_anti_neg_one.hash(&random_state),
-            raw_anti_neg_one.cast(),
-        ));
-
-        let raw_alpha = RawBoxOwned::<PolynumBox>::new_with(
+        let raw = RawBoxOwned::<PolynumBox>::new_with(
             vec![Color::Black, Color::Black, Color::Black],
             vec![
                 Natural::from(1_u32),
@@ -705,68 +718,18 @@ impl BoxStore {
             ],
             vec![3, 2, 1],
         );
-        let alpha_id = BoxId::<PolynumBox>::new(register_box(
-            raw_alpha.kind(),
-            raw_alpha.hash(&random_state),
-            raw_alpha.cast(),
-        ));
-
-        let raw_neg_alpha = RawBoxOwned::<PolynumBox>::new_with(
-            vec![Color::Black, Color::Red, Color::Black],
-            vec![
-                Natural::from(1_u32),
-                Natural::from(1_u32),
-                Natural::from(1_u32),
-            ],
-            vec![3, 2, 1],
-        );
-        let neg_alpha_id = BoxId::<PolynumBox>::new(register_box(
-            raw_neg_alpha.kind(),
-            raw_neg_alpha.hash(&random_state),
-            raw_neg_alpha.cast(),
-        ));
-
-        let raw_anti_alpha = RawBoxOwned::<PolynumBox>::new_with(
-            vec![Color::Red, Color::Black, Color::Black],
-            vec![
-                Natural::from(1_u32),
-                Natural::from(1_u32),
-                Natural::from(1_u32),
-            ],
-            vec![3, 2, 1],
-        );
-        let anti_alpha_id = BoxId::<PolynumBox>::new(register_box(
-            raw_anti_alpha.kind(),
-            raw_anti_alpha.hash(&random_state),
-            raw_anti_alpha.cast(),
-        ));
-
-        let raw_anti_neg_alpha = RawBoxOwned::<PolynumBox>::new_with(
-            vec![Color::Red, Color::Red, Color::Black],
-            vec![
-                Natural::from(1_u32),
-                Natural::from(1_u32),
-                Natural::from(1_u32),
-            ],
-            vec![3, 2, 1],
-        );
-        let anti_neg_alpha_id = BoxId::<PolynumBox>::new(register_box(
-            raw_anti_neg_alpha.kind(),
-            raw_anti_neg_alpha.hash(&random_state),
-            raw_anti_neg_alpha.cast(),
+        let alpha = BoxId::<PolynumBox>::new(register_box(
+            raw.kind(),
+            raw.hash(&random_state),
+            raw.cast(),
         ));
 
         let constants = BoxConstants {
-            zero: zero_id,
-            anti_zero: anti_zero_id,
-            one: one_id,
-            anti_one: anti_one_id,
-            alpha: alpha_id,
-            neg_alpha: neg_alpha_id,
-            anti_alpha: anti_alpha_id,
-            anti_neg_alpha: anti_neg_alpha_id,
-            neg_one: neg_one_id,
-            anti_neg_one: anti_neg_one_id,
+            zero,
+            anti_zero,
+            one,
+            neg_one,
+            alpha,
         };
 
         Self {
@@ -804,28 +767,17 @@ impl BoxStore {
         BoxState::Committed(self.constants.neg_one)
     }
 
-    pub fn anti_one(&self) -> BoxState<NumBox> {
-        BoxState::Committed(self.constants.anti_one)
-    }
-
-    pub fn anti_neg_one(&self) -> BoxState<NumBox> {
-        BoxState::Committed(self.constants.anti_neg_one)
-    }
-
     pub fn alpha(&self) -> BoxState<PolynumBox> {
         BoxState::Committed(self.constants.alpha)
     }
 
-    pub fn neg_alpha(&self) -> BoxState<PolynumBox> {
-        BoxState::Committed(self.constants.neg_alpha)
-    }
-
-    pub fn anti_alpha(&self) -> BoxState<PolynumBox> {
-        BoxState::Committed(self.constants.anti_alpha)
-    }
-
-    pub fn anti_neg_alpha(&self) -> BoxState<PolynumBox> {
-        BoxState::Committed(self.constants.anti_neg_alpha)
+    /// Returns the negative of a box
+    pub fn negate<T: BoxType>(&self, box_state: &BoxState<T>) -> BoxState<T> {
+        let mut raw_owned = RawBoxOwned::from(box_state.as_raw(self));
+        if let Some(col) = raw_owned.colors.get_mut(1) {
+            *col = col.invert();
+        }
+        BoxState::Uncommitted(raw_owned)
     }
 
     /// Gets the raw data of a box given by its id
@@ -874,14 +826,14 @@ impl BoxStore {
         color: Color,
         multiplicity: Natural,
     ) -> RawBoxOwned<U> {
-        let source_len = raw.length();
+        let source_len = raw.length(0);
 
         let mut result = RawBoxOwned::<U>::new();
         result.colors.push(color);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1 + source_len);
 
-        result.colors.push(raw.color());
+        result.colors.push(raw.color(0));
         result.multiplicities.push(multiplicity);
         result.lengths.push(source_len);
 
@@ -896,23 +848,17 @@ impl BoxStore {
         result
     }
 
-    pub fn wrap_in_box<T: BoxType, U: BoxType>(
+    pub fn wrap_in_box<U: BoxType>(
         &self,
-        source: &BoxState<T>,
+        source: &BoxState<impl BoxType>,
         color: Color,
         multiplicity: Natural,
     ) -> BoxState<U> {
-        let raw = source.as_raw(self);
-        Uncommitted(self.wrap_in_box_raw(raw, color, multiplicity))
-    }
-
-    pub fn from_u32_raw(&self, num: u32) -> RawBoxOwned<NumBox> {
-        let zero_raw = self.get_raw(self.constants.zero);
-        self.wrap_in_box_raw(zero_raw, Color::Black, Natural::from(num))
+        Uncommitted(self.wrap_in_box_raw(source.as_raw(self), color, multiplicity))
     }
 
     pub fn from_u32(&self, num: u32) -> BoxState<NumBox> {
-        Uncommitted(self.from_u32_raw(num))
+        self.wrap_in_box(&self.zero(), Color::Black, Natural::from(num))
     }
 
     pub fn from_u64(&self, num: u64) -> BoxState<NumBox> {
@@ -988,44 +934,33 @@ impl BoxStore {
         count
     }
 
-    /// Checks if two boxes have the same content structure ignoring their outer colors and multiplicities
-    pub fn cmp_content<T: BoxType>(&self, left: BoxId<T>, right: BoxId<T>) -> bool {
-        let raw_left = self.get_raw(left);
-        let raw_right = self.get_raw(right);
-        raw_left.cmp_content(&raw_right)
-    }
-
-    /// Hashes the content of a box ignoring its outer color and multiplicity
-    pub fn hash_content<T: BoxType>(&self, box_id: BoxId<T>) -> u64 {
-        let raw = self.get_raw(box_id);
-        raw.hash_content(&self.random_state)
-    }
-
-    fn add_child_boxes<'a>(
+    fn add_child_boxes(
         &self,
-        raw_box: RawBox<'a, AnyBox>,
-        unique_children: &mut RapidHashMap<u64, (RawBox<'a, AnyBox>, Color, Natural)>,
+        raw_box: RawBox<'_, AnyBox>,
+        unique_children: &mut RapidHashMap<u64, RawBoxOwned<AnyBox>>,
     ) {
         for child_raw in raw_box {
-            let child_col = child_raw.color();
-            let child_mul = child_raw.multiplicity();
+            let child_col = child_raw.color(0);
+            let child_mul = child_raw.multiplicity(0);
             let struct_hash = child_raw.hash_content(&self.random_state);
 
-            if let Some((other_raw, other_col, other_mul)) = unique_children.get_mut(&struct_hash)
-                && child_raw.cmp_content(other_raw)
+            if let Some(other) = unique_children.get_mut(&struct_hash)
+                && child_raw.cmp_content(&other.as_raw())
             {
-                if child_col + *other_col == Color::Red {
-                    if child_mul < *other_mul {
-                        other_mul.saturating_sub_assign(child_mul);
+                let other_col = other.color(0);
+                let other_mul = other.multiplicity(0);
+                if child_col + other_col == Color::Red {
+                    if child_mul < other_mul {
+                        other.set_multiplicity(other_mul.saturating_sub(child_mul), 0);
                     } else {
-                        *other_mul = child_mul.saturating_sub(other_mul.clone());
-                        *other_col = child_col;
+                        other.set_multiplicity(child_mul.saturating_sub(other_mul), 0);
+                        other.set_color(child_col, 0);
                     }
                 } else {
-                    *other_mul += child_mul;
+                    other.set_multiplicity(other_mul + child_mul, 0);
                 }
             } else {
-                unique_children.insert(struct_hash, (child_raw, child_col, child_mul));
+                unique_children.insert(struct_hash, RawBoxOwned::from(child_raw));
             }
         }
     }
@@ -1041,42 +976,27 @@ impl BoxStore {
         R: BoxType,
     {
         let mut result = RawBoxOwned::<L::Output>::new();
-        let mut unique_children: RapidHashMap<u64, (RawBox<AnyBox>, Color, Natural)> =
-            RapidHashMap::new();
+        let mut unique_children: RapidHashMap<u64, RawBoxOwned<AnyBox>> = RapidHashMap::new();
 
-        let lhs_col = lhs.color();
-        let rhs_col = rhs.color();
+        let lhs_col = lhs.color(0);
+        let rhs_col = rhs.color(0);
+
+        result.colors.push(lhs_col + rhs_col);
+        result.multiplicities.push(Natural::from(1_u32));
+        result.lengths.push(1);
 
         self.add_child_boxes(lhs.cast(), &mut unique_children);
         self.add_child_boxes(rhs.cast(), &mut unique_children);
 
-        result.colors.push(lhs_col + rhs_col);
-        result.multiplicities.push(Natural::from(1_u32));
-        result.lengths.push(0);
-
-        let mut written_len = 0;
-        for (curr_raw, curr_col, curr_mul) in unique_children.values() {
-            if *curr_mul == 0 {
+        for child in unique_children.into_values() {
+            let mult = child.multiplicity(0);
+            if mult == 0 {
                 continue;
             }
 
-            let len = curr_raw.length();
-            result.colors.push(*curr_col);
-            result.multiplicities.push(curr_mul.clone());
-            result.lengths.push(len);
-
-            if len > 1 {
-                result.colors.extend_from_slice(&curr_raw.colors[1..]);
-                result
-                    .multiplicities
-                    .extend_from_slice(&curr_raw.multiplicities[1..]);
-                result.lengths.extend_from_slice(&curr_raw.lengths[1..]);
-            }
-
-            written_len += len;
+            result.append_owned(child);
         }
 
-        result.lengths[0] = 1 + written_len;
         result.sort_immediate_children();
         result
     }
@@ -1105,37 +1025,37 @@ impl BoxStore {
         let mut result = RawBoxOwned::new();
         let mut unique_children: RapidHashMap<u64, RawBoxOwned<AnyBox>> = RapidHashMap::new();
 
-        let lhs_col = lhs_raw.color();
-        let rhs_col = rhs_raw.color();
+        let lhs_col = lhs_raw.color(0);
+        let rhs_col = rhs_raw.color(0);
 
         for left_child in lhs_raw {
             for right_child in rhs_raw.clone() {
-                let left_mul = left_child.multiplicity();
-                let right_mul = right_child.multiplicity();
+                let left_mul = left_child.multiplicity(0);
+                let right_mul = right_child.multiplicity(0);
                 let curr_mul = left_mul * right_mul;
 
                 let mut curr_owned = self.add_raw(left_child, right_child);
 
-                let curr_col = curr_owned.colors[0];
+                let curr_col = curr_owned.color(0);
                 let struct_hash = curr_owned.hash_content(&self.random_state);
 
-                if let Some(other_owned) = unique_children.get_mut(&struct_hash)
-                    && curr_owned.cmp_content(other_owned)
+                if let Some(other) = unique_children.get_mut(&struct_hash)
+                    && curr_owned.cmp_content(other)
                 {
-                    let other_col = &mut other_owned.colors[0];
-                    let other_mul = &mut other_owned.multiplicities[0];
-                    if curr_col + *other_col == Color::Red {
-                        if &curr_mul < other_mul {
-                            other_mul.saturating_sub_assign(curr_mul);
+                    let other_col = other.color(0);
+                    let other_mul = other.multiplicity(0);
+                    if curr_col + other_col == Color::Red {
+                        if curr_mul < other_mul {
+                            other.set_multiplicity(other_mul.saturating_sub(curr_mul), 0);
                         } else {
-                            *other_mul = curr_mul.saturating_sub(other_mul.clone());
-                            *other_col = curr_col;
+                            other.set_multiplicity(curr_mul.saturating_sub(other_mul), 0);
+                            other.set_color(curr_col, 0);
                         }
                     } else {
-                        *other_mul += curr_mul;
+                        other.set_multiplicity(other_mul + curr_mul, 0);
                     }
                 } else {
-                    curr_owned.multiplicities[0] = curr_mul;
+                    curr_owned.set_multiplicity(curr_mul, 0);
                     unique_children.insert(struct_hash, curr_owned);
                 }
             }
@@ -1143,22 +1063,17 @@ impl BoxStore {
 
         result.colors.push(lhs_col + rhs_col);
         result.multiplicities.push(Natural::from(1_u32));
-        result.lengths.push(0);
+        result.lengths.push(1);
 
-        let mut written_len = 0;
         for raw_box in unique_children.into_values() {
-            let mul = raw_box.multiplicity();
+            let mul = raw_box.multiplicity(0);
             if mul == 0 {
                 continue;
             }
 
-            written_len += raw_box.length();
-            result.colors.extend(raw_box.colors);
-            result.multiplicities.extend(raw_box.multiplicities);
-            result.lengths.extend(raw_box.lengths);
+            result.append_owned(raw_box);
         }
 
-        result.lengths[0] = 1 + written_len;
         result.sort_immediate_children();
         result
     }
@@ -1175,14 +1090,14 @@ impl BoxStore {
         BoxState::Uncommitted(result)
     }
 
-    /// Instantiates a pixel given two boxes
+    /// Returns a raw pixel
     pub fn pixel_raw<T: BoxType, U: BoxType>(
         &self,
         x_raw: RawBox<'_, T>,
         y_raw: RawBox<'_, U>,
     ) -> RawBoxOwned<PixelBox> {
-        let x_len = x_raw.length();
-        let y_len = y_raw.length();
+        let x_len = x_raw.length(0);
+        let y_len = y_raw.length(0);
 
         let mut result = RawBoxOwned::<PixelBox>::new();
         result.colors.push(Color::Black);
@@ -1216,8 +1131,8 @@ impl BoxStore {
     }
 
     /// Returns the first component of a pixel
-    pub fn pixel_x_raw<'a>(&'a self, raw: RawBox<'a, PixelBox>) -> RawBox<'a, PixelBox> {
-        let x_len = raw.lengths[1] as usize;
+    pub fn pixel_x_raw<'a>(&'a self, raw: RawBox<'a, PixelBox>) -> RawBox<'a, AnyBox> {
+        let x_len = raw.length(1) as usize;
         RawBox::new(
             &raw.colors[1..1 + x_len],
             &raw.multiplicities[1..1 + x_len],
@@ -1226,10 +1141,10 @@ impl BoxStore {
     }
 
     /// Returns the second component of a pixel
-    pub fn pixel_y_raw<'a>(&'a self, raw: RawBox<'a, PixelBox>) -> RawBox<'a, PixelBox> {
-        let x_len = raw.lengths[1] as usize;
+    pub fn pixel_y_raw<'a>(&'a self, raw: RawBox<'a, PixelBox>) -> RawBox<'a, AnyBox> {
+        let x_len = raw.length(1) as usize;
         let y_idx = 1 + x_len;
-        let y_len = raw.lengths[y_idx] as usize;
+        let y_len = raw.length(y_idx) as usize;
         RawBox::new(
             &raw.colors[y_idx..y_idx + y_len],
             &raw.multiplicities[y_idx..y_idx + y_len],
@@ -1280,7 +1195,7 @@ impl BoxStore {
                 if let Some(mul) =
                     self.mul_pixel_raw(left_pix.cast::<PixelBox>(), right_pix.cast::<PixelBox>())
                 {
-                    result.append_raw_owned(mul);
+                    result.append_owned(mul);
                 }
             }
         }
@@ -1295,12 +1210,12 @@ impl BoxStore {
     ) -> BoxState<MaxelBox> {
         let left_raw = left.as_raw(self);
         let right_raw = right.as_raw(self);
-        let raw_result = self.mul_maxel_raw(left_raw, right_raw);
-        BoxState::Uncommitted(raw_result)
+        let result = self.mul_maxel_raw(left_raw, right_raw);
+        BoxState::Uncommitted(result)
     }
 
-    pub fn unixel_raw<T: BoxType>(&self, x_raw: RawBox<T>) -> RawBoxOwned<UnixelBox> {
-        let x_len = x_raw.length();
+    pub fn unix_raw<T: BoxType>(&self, x_raw: RawBox<T>) -> RawBoxOwned<UnixelBox> {
+        let x_len = x_raw.length(0);
 
         let mut result = RawBoxOwned::<UnixelBox>::new();
         result.colors.push(Color::Black);
@@ -1317,8 +1232,55 @@ impl BoxStore {
     }
 
     pub fn unixel<T: BoxType>(&self, x: BoxState<T>) -> BoxState<UnixelBox> {
-        let x_raw = x.as_raw(self);
-        Uncommitted(self.unixel_raw(x_raw))
+        BoxState::Uncommitted(self.unix_raw(x.as_raw(self)))
+    }
+
+    pub fn unix_x_raw<'a>(&self, raw: RawBox<'a, UnixelBox>) -> RawBox<'a, AnyBox> {
+        let x_len = raw.length(1) as usize;
+        RawBox::new(
+            &raw.colors[1..1 + x_len],
+            &raw.multiplicities[1..1 + x_len],
+            &raw.lengths[1..1 + x_len],
+        )
+    }
+
+    fn mul_pix_unix(
+        &self,
+        pix: RawBox<'_, PixelBox>,
+        unix: RawBox<'_, UnixelBox>,
+    ) -> Option<RawBoxOwned<UnixelBox>> {
+        let left_y = self.pixel_y_raw(pix);
+        let right_x = self.unix_x_raw(unix);
+
+        if left_y == right_x {
+            return Some(self.unix_raw(left_y));
+        }
+
+        None
+    }
+
+    pub fn mul_max_vex(
+        &self,
+        max: &BoxState<MaxelBox>,
+        vex: &BoxState<VexelBox>,
+    ) -> BoxState<VexelBox> {
+        let mut result = RawBoxOwned::<VexelBox>::new();
+        let left = max.as_raw(self);
+        let right = vex.as_raw(self);
+        result.colors.push(Color::Black);
+        result.multiplicities.push(Natural::from(1_u32));
+        result.lengths.push(1);
+        for left_pix in left {
+            for right_unix in right {
+                if let Some(mul) =
+                    self.mul_pix_unix(left_pix.cast::<PixelBox>(), right_unix.cast::<UnixelBox>())
+                {
+                    result.append_owned(mul);
+                }
+            }
+        }
+        result.sort_immediate_children();
+        BoxState::Uncommitted(result)
     }
 }
 
@@ -1365,13 +1327,15 @@ macro_rules! into_pixel {
 macro_rules! into_maxel {
     ($store:expr, $([$x:expr, $y:expr]),* $(,)?) => {
         {
-            let mut result = $crate::alt_model::RawBoxOwned::<MaxelBox>::new();
+            let mut result = $crate::lib_alt::RawBoxOwned::<MaxelBox>::new();
             result.colors.push(Color::Black);
             result.multiplicities.push(Natural::from(1_u32));
             result.lengths.push(1);
             $(
-                let pix = $store.pixel(($x).into_box_state($store), ($y).into_box_state($store));
-                result.append_raw(pix.as_raw($store));
+                let x_state = ($x).into_box_state($store);
+                let y_state = ($y).into_box_state($store);
+                let pix = $store.pixel_raw(x_state.as_raw($store), y_state.as_raw($store));
+                result.append_owned(pix);
             )*
             result
         }
@@ -1382,13 +1346,14 @@ macro_rules! into_maxel {
 macro_rules! into_vexel {
     ($store:expr, [$($x:expr),* $(,)?]) => {
         {
-            let mut result = $crate::alt_model::RawBoxOwned::<VexelBox>::new();
+            let mut result = $crate::lib_alt::RawBoxOwned::<VexelBox>::new();
             result.colors.push(Color::Black);
             result.multiplicities.push(Natural::from(1_u32));
             result.lengths.push(1);
             $(
-                let unix = $store.unixel(($x).into_box_state($store));
-                result.append_raw(unix.as_raw($store));
+                let state = ($x).into_box_state($store);
+                let unix = $store.unix_raw(state.as_raw($store));
+                result.append_owned(unix);
             )*
             result
         }
@@ -1437,63 +1402,47 @@ mod tests {
 
     #[test]
     fn test_add() {
-        let mut store = BoxStore::new();
+        let store = BoxStore::new();
+
         let zero = store.zero();
-
-        let two = store.add(&store.one(), &store.one());
-        let expected = store.wrap_in_box::<_, NumBox>(&zero, Color::Black, Natural::from(2_u32));
-        assert_eq!(two, expected);
-
-        let minus_two = store.add(&store.neg_one(), &store.neg_one());
-        let expected = store.wrap_in_box(&store.anti_zero(), Color::Black, Natural::from(2_u32));
-        assert_eq!(minus_two, expected);
-
-        let minus_one = store.wrap_in_box::<NumBox, NumBox>(
-            &store.anti_zero(),
-            Color::Black,
-            Natural::from(1_u32),
-        );
-        let zero = store.add(&minus_one, &store.one());
-        let zero_comm = zero.commit(&mut store);
-        assert_eq!(zero_comm, store.constants.zero);
-
+        let one = store.one();
         let two = store.from_u32(2);
         let three = store.from_u32(3);
-        let five = store.add(&two, &three);
-        let expected = store.from_u32(5);
-        assert_eq!(five, expected);
-
+        let minus_one = store.negate(&one);
         let minus_two = store.from_i32(-2);
-        let three = store.from_u32(3);
-        let one = store.add(&minus_two, &three);
-        let expected = store.from_u32(1);
-        assert_eq!(one, expected);
-
         let alpha = store.alpha();
-        let two_alpha = store.add(&alpha, &alpha);
-        let expected = store.wrap_in_box::<NumBox, PolynumBox>(
-            &store.one(),
-            Color::Black,
-            Natural::from(2_u32),
-        );
-        assert_eq!(two_alpha, expected);
+        let beta_1 = store.wrap_in_box::<MultinumBox>(&alpha, Color::Black, Natural::from(1_u32));
+        let two_beta_1 =
+            store.wrap_in_box::<MultinumBox>(&alpha, Color::Black, Natural::from(2_u32));
 
-        let alpha_1 = store.wrap_in_box::<PolynumBox, MultinumBox>(
-            &alpha,
-            Color::Black,
-            Natural::from(1_u32),
-        );
-        let two_alpha_1 = store.wrap_in_box::<PolynumBox, MultinumBox>(
-            &alpha,
-            Color::Black,
-            Natural::from(2_u32),
-        );
-        let sum = store.add(&alpha_1, &two_alpha_1);
+        let sum = store.add(&store.one(), &store.one());
+        let expected = store.wrap_in_box::<NumBox>(&zero, Color::Black, Natural::from(2_u32));
+        assert_eq!(sum, expected);
+
+        let sum = store.add(&minus_one, &minus_one);
+        let expected = store.wrap_in_box(&store.anti_zero(), Color::Black, Natural::from(2_u32));
+        assert_eq!(sum, expected);
+
+        let sum = store.add(&minus_one, &one);
+        assert_eq!(sum.as_raw(&store), zero.as_raw(&store));
+
+        let sum = store.add(&two, &three);
+        let expected = store.from_u32(5);
+        assert_eq!(sum, expected);
+
+        let sum = store.add(&minus_two, &three);
+        let expected = store.from_u32(1);
+        assert_eq!(sum, expected);
+
+        let sum = store.add(&alpha, &alpha);
+        let expected =
+            store.wrap_in_box::<PolynumBox>(&store.one(), Color::Black, Natural::from(2_u32));
+        assert_eq!(sum, expected);
+
+        let sum = store.add(&beta_1, &two_beta_1);
         let expected = store.wrap_in_box(&alpha, Color::Black, Natural::from(3_u32));
         assert_eq!(sum, expected);
 
-        let one = store.one();
-        let alpha = store.alpha();
         let sum_1 = store.add(&one, &alpha);
         let sum_2 = store.add(&alpha, &one);
         assert_eq!(sum_1, sum_2);
@@ -1502,36 +1451,39 @@ mod tests {
     #[test]
     fn test_mul() {
         let store = BoxStore::new();
+
+        let zero = store.zero();
+        let one = store.one();
         let two = store.from_u32(2);
         let three = store.from_u32(3);
-        let six = store.mul(&two, &three);
-        let expected = store.from_u32(6);
-        assert_eq!(six, expected);
-
-        let six_2 = store.mul(&three, &two);
-        assert_eq!(six, six_2);
-
         let m_three = store.from_i32(-3);
-        let m_six = store.mul(&two, &m_three);
+        let anti_one = store.wrap_in_box::<NumBox>(&zero, Color::Red, Natural::from(1_u32));
+        let alpha = store.alpha();
+        let minus_alpha =
+            store.wrap_in_box::<PolynumBox>(&anti_one, Color::Black, Natural::from(1_u32));
+        let anti_two = store.wrap_in_box::<NumBox>(&zero, Color::Red, Natural::from(2_u32));
+        let minus_2_alpha =
+            store.wrap_in_box::<PolynumBox>(&anti_two, Color::Black, Natural::from(1_u32));
+
+        let prod = store.mul(&two, &three);
+        let expected = store.from_u32(6);
+        assert_eq!(prod, expected);
+
+        let expected = store.mul(&three, &two);
+        assert_eq!(prod, expected);
+
+        let prod = store.mul(&two, &m_three);
         let expected = store.from_i32(-6);
-        assert_eq!(m_six, expected);
+        assert_eq!(prod, expected);
 
-        let alpha = store.alpha();
-        let alpha_2 = store.mul(&alpha, &alpha);
-        let two = store.from_u32(2);
+        let prod = store.mul(&alpha, &alpha);
         let expected = store.wrap_in_box(&two, Color::Black, Natural::from(1_u32));
-        assert_eq!(alpha_2, expected);
+        assert_eq!(prod, expected);
 
-        let one = store.one();
-        let alpha = store.alpha();
-        let p1 = store.add(&one, &alpha);
-        let p2 = store.add(&one, &store.neg_alpha());
-        let prod = store.mul(&p1, &p2);
-        let anti_two =
-            store.wrap_in_box::<NumBox, NumBox>(&store.zero(), Color::Red, Natural::from(2_u32));
-        let neg_alpha_2 =
-            store.wrap_in_box::<NumBox, PolynumBox>(&anti_two, Color::Black, Natural::from(1_u32));
-        let expected = store.add(&one, &neg_alpha_2);
+        let s1 = store.add(&one, &alpha);
+        let s2 = store.add(&one, &minus_alpha);
+        let prod = store.mul(&s1, &s2);
+        let expected = store.add(&one, &minus_2_alpha);
         assert_eq!(prod, expected);
     }
 

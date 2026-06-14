@@ -3,7 +3,7 @@ use std::fmt::Display;
 use colored::Colorize;
 use malachite::Natural;
 
-use crate::alt_model::{BoxType, RawBox};
+use crate::lib_alt::{BoxType, RawBox};
 
 /// Helper function to display multiplicities as subscripts
 fn to_subscript(num: Natural) -> String {
@@ -48,8 +48,8 @@ impl<T: BoxType> Display for RawBox<'_, T> {
             }
             first = false;
 
-            let len = child.length();
-            let mult = child.multiplicity();
+            let len = child.length(0);
+            let mult = child.multiplicity(0);
             if len > 1 {
                 if f.alternate() {
                     if mult > 1 {
@@ -98,7 +98,7 @@ impl<T: BoxType> Display for RawBox<'_, T> {
 mod tests {
     use malachite::Natural;
 
-    use crate::alt_model::{BoxStore, Color, NumBox};
+    use crate::lib_alt::{BoxStore, Color, NumBox};
 
     #[test]
     fn test_display() {
@@ -128,8 +128,7 @@ mod tests {
         println!("{poly_4_raw}");
         println!("{poly_4_raw:#}");
 
-        let anti_box =
-            store.wrap_in_box::<NumBox, NumBox>(&store.zero(), Color::Red, Natural::from(4_u32));
+        let anti_box = store.wrap_in_box::<NumBox>(&store.zero(), Color::Red, Natural::from(4_u32));
         let anti_box_raw = anti_box.as_raw(&store);
         println!("{anti_box_raw:#}");
     }
