@@ -1,137 +1,202 @@
 //! Maxel is an extension of matrices into the world of boxes
-use crate::MBox;
 
-impl MBox {
-    /// A pixel is a 2-list of boxes
-    pub fn pixel(a: Self, b: Self) -> Self {
-        let mut result = Self::new();
-        let mut current_sequence = Self::new();
-        current_sequence.insert_box(a.clone());
-        result.insert_box(current_sequence.clone());
-        current_sequence.insert_box(b);
-        result.insert_box(current_sequence);
+use malachite::Natural;
+
+use crate::{
+    AnyBox, BoxState, BoxStore, BoxType, Color, MaxelBox, PixelBox, RawBox, RawBoxOwned, UnixelBox,
+    VexelBox,
+};
+impl BoxStore {
+    /// Returns a raw pixel
+    pub fn pixel_raw<T: BoxType, U: BoxType>(
+        &self,
+        x_raw: RawBox<'_, T>,
+        y_raw: RawBox<'_, U>,
+    ) -> RawBoxOwned<PixelBox> {
+        let x_len = x_raw.length(0);
+        let y_len = y_raw.length(0);
+
+        let mut result = RawBoxOwned::<PixelBox>::new();
+        result.colors.push(Color::Black);
+        result.multiplicities.push(Natural::from(1_u32));
+        result.lengths.push(1 + x_len + y_len);
+
+        result.colors.extend_from_slice(x_raw.colors);
+        result
+            .multiplicities
+            .extend_from_slice(x_raw.multiplicities);
+        result.lengths.extend_from_slice(x_raw.lengths);
+
+        result.colors.extend_from_slice(y_raw.colors);
+        result
+            .multiplicities
+            .extend_from_slice(y_raw.multiplicities);
+        result.lengths.extend_from_slice(y_raw.lengths);
+
         result
     }
 
-    /// Tests if the box is a pixel
-    pub fn is_pixel(&self) -> bool {
-        self.as_boxes().len() == 2 && self.is_list()
+    /// Returns a pixel
+    pub fn pixel<T: BoxType, U: BoxType>(
+        &self,
+        x: BoxState<T>,
+        y: BoxState<U>,
+    ) -> BoxState<PixelBox> {
+        let x_raw = x.as_raw(self);
+        let y_raw = y.as_raw(self);
+        BoxState::Uncommitted(self.pixel_raw(x_raw, y_raw))
     }
 
-    /// Tests if the box contains only one element
-    pub fn is_singleton(&self) -> bool {
-        self.as_boxes().len() == 1
+    /// Returns the first child of a box
+    pub fn x_raw<'a>(&'a self, raw: RawBox<'a, PixelBox>) -> RawBox<'a, AnyBox> {
+        let x_len = raw.length(1) as usize;
+        RawBox::new(
+            &raw.colors[1..1 + x_len],
+            &raw.multiplicities[1..1 + x_len],
+            &raw.lengths[1..1 + x_len],
+        )
     }
 
-    /// Tests if the box is a vexel which is defined as a box of singletons
-    pub fn is_vexel(&self) -> bool {
-        self.as_boxes().iter().all(|(b, _)| b.is_singleton())
+    /// Returns the second child of a box
+    pub fn y_raw<'a>(&'a self, raw: RawBox<'a, PixelBox>) -> RawBox<'a, AnyBox> {
+        let x_len = raw.length(1) as usize;
+        let y_idx = 1 + x_len;
+        let y_len = raw.length(y_idx) as usize;
+        RawBox::new(
+            &raw.colors[y_idx..y_idx + y_len],
+            &raw.multiplicities[y_idx..y_idx + y_len],
+            &raw.lengths[y_idx..y_idx + y_len],
+        )
     }
 
-    /// Tests if the box is a maxel which is defined as a box of pixels
-    pub fn is_maxel(&self) -> bool {
-        self.as_boxes().iter().all(|(b, _)| b.is_pixel())
-    }
+    /// Multiplies two pixels
+    pub fn mul_pixel_raw(
+        &self,
+        left: RawBox<PixelBox>,
+        right: RawBox<PixelBox>,
+    ) -> Option<RawBoxOwned<PixelBox>> {
+        let left_y = self.y_raw(left);
+        let right_x = self.x_raw(right);
 
-    /// Converts to a pair of boxes
-    pub fn as_pixel_pair(&self) -> Option<(&MBox, &MBox)> {
-        let mut iter = self.as_boxes().keys();
-        let first = iter.next()?;
-        let first_box = first.as_boxes().keys().next()?;
-
-        let second = iter.next()?;
-        let second_box = second
-            .as_boxes()
-            .iter()
-            .find(|&(m_box, &mul)| if m_box == first_box { mul > 1 } else { true })?
-            .0;
-
-        Some((first_box, second_box))
-    }
-
-    /// If a and b are pixels, computes their pixel product
-    pub fn pixel_product(a_box: &MBox, b_box: &MBox) -> Option<Self> {
-        let (a_1, a_2) = a_box.as_pixel_pair()?;
-        let (b_1, b_2) = b_box.as_pixel_pair()?;
-
-        if a_2 == b_1 {
-            Some(Self::pixel(a_1.clone(), b_2.clone()))
-        } else {
-            None
-        }
-    }
-
-    /// Computes the product of two maxels
-    pub fn maxel_product(a_box: &MBox, b_box: &MBox) -> Option<Self> {
-        if !a_box.is_maxel() || !b_box.is_maxel() {
-            return None;
+        if left_y == right_x {
+            let left_x = self.x_raw(left);
+            let right_y = self.y_raw(right);
+            return Some(self.pixel_raw(left_x, right_y));
         }
 
-        let mut result = Self::new();
-        for (a_pix, a_mul) in a_box.as_boxes() {
-            for (b_pix, b_mul) in b_box.as_boxes() {
-                if let Some(pix) = Self::pixel_product(a_pix, b_pix) {
-                    *result.as_boxes_mut().entry(pix).or_insert(0) += a_mul * b_mul;
+        None
+    }
+
+    pub fn mul_pixel(
+        &self,
+        left: &BoxState<PixelBox>,
+        right: &BoxState<PixelBox>,
+    ) -> Option<BoxState<PixelBox>> {
+        let left_raw = left.as_raw(self);
+        let right_raw = right.as_raw(self);
+        let result = self.mul_pixel_raw(left_raw, right_raw);
+        result.map(BoxState::Uncommitted)
+    }
+
+    pub fn mul_maxel_raw(
+        &self,
+        left: RawBox<MaxelBox>,
+        right: RawBox<MaxelBox>,
+    ) -> RawBoxOwned<MaxelBox> {
+        let mut result = RawBoxOwned::<MaxelBox>::new();
+        result.colors.push(Color::Black);
+        result.multiplicities.push(Natural::from(1_u32));
+        result.lengths.push(1);
+        for left_pix in left {
+            for right_pix in right {
+                if let Some(mul) =
+                    self.mul_pixel_raw(left_pix.cast::<PixelBox>(), right_pix.cast::<PixelBox>())
+                {
+                    result.extend(mul);
                 }
             }
         }
-
-        Some(result)
+        result.sort_immediate_children();
+        result
     }
-}
 
-#[macro_export]
-macro_rules! pixel {
-    ($x:expr, $y:expr) => {
-        $crate::MBox::pixel(($x).into(), ($y).into())
-    };
-}
+    pub fn mul_maxel(
+        &self,
+        left: &BoxState<MaxelBox>,
+        right: &BoxState<MaxelBox>,
+    ) -> BoxState<MaxelBox> {
+        let left_raw = left.as_raw(self);
+        let right_raw = right.as_raw(self);
+        let result = self.mul_maxel_raw(left_raw, right_raw);
+        BoxState::Uncommitted(result)
+    }
 
-#[macro_export]
-macro_rules! maxel {
-    ($([$x:expr, $y:expr]),* $(,)?) => {
-        {
-            let mut outer_box = $crate::MBox::new();
-            $(
-                let pix = $crate::MBox::pixel(($x).into(), ($y).into());
-                outer_box.insert_box(pix);
-            )*
-            outer_box
+    pub fn unix_raw<T: BoxType>(&self, x_raw: RawBox<T>) -> RawBoxOwned<UnixelBox> {
+        let x_len = x_raw.length(0);
+
+        let mut result = RawBoxOwned::<UnixelBox>::new();
+        result.colors.push(Color::Black);
+        result.multiplicities.push(Natural::from(1_u32));
+        result.lengths.push(1 + x_len);
+
+        result.colors.extend_from_slice(x_raw.colors);
+        result
+            .multiplicities
+            .extend_from_slice(x_raw.multiplicities);
+        result.lengths.extend_from_slice(x_raw.lengths);
+
+        result
+    }
+
+    pub fn unixel<T: BoxType>(&self, x: BoxState<T>) -> BoxState<UnixelBox> {
+        BoxState::Uncommitted(self.unix_raw(x.as_raw(self)))
+    }
+
+    fn mul_pix_unix(
+        &self,
+        pix: RawBox<'_, PixelBox>,
+        unix: RawBox<'_, UnixelBox>,
+    ) -> Option<RawBoxOwned<UnixelBox>> {
+        let left_y = self.y_raw(pix);
+        let right_x = self.x_raw(unix.cast::<PixelBox>());
+
+        if left_y == right_x {
+            return Some(self.unix_raw(self.x_raw(pix)));
         }
-    };
-}
 
-#[cfg(test)]
-mod tests {
-    use crate::MBox;
-
-    #[test]
-    fn test_pixel_product_1() {
-        let a = pixel![2, 2];
-        let b = pixel![2, 1];
-        let c = MBox::pixel_product(&a, &b).unwrap();
-        let expected = pixel![2, 1];
-        assert_eq!(c, expected);
-
-        let a = pixel![1, 2];
-        let b = pixel![3, 4];
-        let none = MBox::pixel_product(&a, &b);
-        assert!(none.is_none());
-
-        let a = pixel![1, 2];
-        let b = pixel![2, 1];
-        let c = MBox::pixel_product(&a, &b).unwrap();
-
-        let expected = MBox::pixel(MBox::from(1), MBox::from(1));
-        assert_eq!(c, expected);
+        None
     }
 
-    #[test]
-    fn test_maxel_product_1() {
-        let a = maxel![[1, 1], [1, 2], [2, 2]];
-        let b = maxel![[1, 2], [2, 1]];
-        let prod = MBox::maxel_product(&a, &b);
-        let expected = maxel![[1, 1], [1, 2], [2, 1]];
-        assert_eq!(prod, Some(expected));
+    fn mul_max_vex_raw(
+        &self,
+        max_raw: RawBox<MaxelBox>,
+        vex_raw: RawBox<VexelBox>,
+    ) -> RawBoxOwned<VexelBox> {
+        let mut result = RawBoxOwned::<VexelBox>::new();
+        result.colors.push(Color::Black);
+        result.multiplicities.push(Natural::from(1_u32));
+        result.lengths.push(1);
+        for left_pix in max_raw {
+            for right_unix in vex_raw {
+                if let Some(mul) =
+                    self.mul_pix_unix(left_pix.cast::<PixelBox>(), right_unix.cast::<UnixelBox>())
+                {
+                    result.extend(mul);
+                }
+            }
+        }
+        result.sort_immediate_children();
+        result
+    }
+
+    pub fn mul_max_vex(
+        &self,
+        max: &BoxState<MaxelBox>,
+        vex: &BoxState<VexelBox>,
+    ) -> BoxState<VexelBox> {
+        let max_raw = max.as_raw(self);
+        let vex_raw = vex.as_raw(self);
+        let result = self.mul_max_vex_raw(max_raw, vex_raw);
+        BoxState::Uncommitted(result)
     }
 }

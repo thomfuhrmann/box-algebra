@@ -1,12 +1,13 @@
 use std::fmt::Display;
 
 use colored::Colorize;
+use malachite::Natural;
 
-use crate::MBox;
+use crate::{BoxType, RawBox};
 
 /// Helper function to display multiplicities as subscripts
-fn to_subscript(n: u64) -> String {
-    n.to_string()
+fn to_subscript(num: Natural) -> String {
+    num.to_string()
         .chars()
         .map(|c| match c {
             '0' => '₀',
@@ -24,15 +25,15 @@ fn to_subscript(n: u64) -> String {
         .collect()
 }
 
-impl Display for MBox {
+impl<T: BoxType> Display for RawBox<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // ⌊ ... ⌋
-        let open = if self.is_anti_box() {
+        let open = if self.is_anti() {
             "⌊".red()
         } else {
             "⌊".black()
         };
-        let close = if self.is_anti_box() {
+        let close = if self.is_anti() {
             "⌋".red()
         } else {
             "⌋".black()
@@ -40,49 +41,46 @@ impl Display for MBox {
 
         write!(f, "{}", open)?;
 
-        let map = self.as_boxes();
         let mut first = true;
-        for (m_box, count) in map.iter() {
+        for child in self.clone() {
             if !first {
                 write!(f, " ")?;
             }
             first = false;
-            // Recurse if the inner box has content
-            if !m_box.is_empty() {
+
+            let len = child.length(0);
+            let mult = child.multiplicity(0);
+            if len > 1 {
                 if f.alternate() {
-                    if *count > 1 {
-                        write!(f, "{}", to_subscript(*count))?;
+                    if mult > 1 {
+                        write!(f, "{}", to_subscript(mult))?;
                     }
 
-                    if *count > 0 {
-                        m_box.fmt(f)?;
-                    }
-                } else {
-                    for i in 0..*count {
+                    child.fmt(f)?;
+                } else if let Ok(count) = usize::try_from(&mult) {
+                    for i in 0..count {
                         if i > 0 {
                             write!(f, " ")?;
                         }
-                        m_box.fmt(f)?;
+                        child.fmt(f)?;
                     }
                 }
             } else {
-                // Print the block symbols based on multiplicity
-                let symbol = if m_box.is_anti_box() {
+                // ■ □
+                let symbol = if child.is_anti() {
                     "□".red()
                 } else {
-                    // ■ □
                     "□".black()
                 };
 
                 if f.alternate() {
-                    if *count > 1 {
-                        write!(f, "{}", to_subscript(*count))?;
+                    if mult > 1 {
+                        write!(f, "{}", to_subscript(mult))?;
                     }
-                    if *count > 0 {
-                        write!(f, "{}", symbol)?;
-                    }
-                } else {
-                    for i in 0..*count {
+
+                    write!(f, "{}", symbol)?;
+                } else if let Ok(count) = usize::try_from(&mult) {
+                    for i in 0..count {
                         if i > 0 {
                             write!(f, " ")?;
                         }
@@ -98,33 +96,40 @@ impl Display for MBox {
 
 #[cfg(test)]
 mod tests {
-    use crate::{MBox, num, var};
+    use malachite::Natural;
+
+    use crate::{BoxStore, Color, NumBox};
 
     #[test]
     fn test_display() {
-        let three = MBox::from(3);
-        println!("{three:#}");
+        let store = BoxStore::new();
+        let three = store.from_u32(3);
+        let three_raw = three.as_raw(&store);
+        println!("{three_raw:#}");
 
-        let anti_two = MBox::from(-2);
-        println!("{anti_two}");
+        let minus_two = store.from_i32(-2);
+        let minus_two_raw = minus_two.as_raw(&store);
+        println!("{minus_two_raw}");
 
-        let sum = &three + &anti_two;
-        println!("{sum}");
+        let sum = store.add_raw(three_raw, minus_two_raw);
+        let sum_raw = sum.as_raw();
+        println!("{sum_raw}");
 
-        let ann = sum.annihilate();
-        println!("{ann}");
+        let alpha = store.alpha();
+        let alpha_raw = alpha.as_raw(&store);
+        println!("{alpha_raw}");
 
-        let alpha = var!(0);
-        println!("{alpha}");
+        let poly_1 = store.add_raw(minus_two_raw, alpha_raw);
+        let poly_2 = store.add_raw(poly_1.as_raw(), alpha_raw);
+        let alpha_2 = store.mul_raw(alpha_raw, alpha_raw);
+        let poly_3 = store.add_raw(poly_2.as_raw(), alpha_2.as_raw());
+        let poly_4 = store.add_raw(poly_3.as_raw(), three_raw);
+        let poly_4_raw = poly_4.as_raw();
+        println!("{poly_4_raw}");
+        println!("{poly_4_raw:#}");
 
-        let poly = &anti_two + &alpha + &alpha + &alpha * &alpha + num!(1);
-        println!("{poly}");
-        println!("{poly:#}");
-
-        let poly_ann = poly.annihilate();
-        println!("{poly_ann:#}");
-
-        let anti_box = MBox::from(4).to_anti_box();
-        println!("{anti_box:#}");
+        let anti_box = store.wrap_in_box::<NumBox>(&store.zero(), Color::Red, Natural::from(4_u32));
+        let anti_box_raw = anti_box.as_raw(&store);
+        println!("{anti_box_raw:#}");
     }
 }
