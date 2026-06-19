@@ -1153,51 +1153,6 @@ impl IntoBoxState<NumBox> for i64 {
     }
 }
 
-#[macro_export]
-macro_rules! into_pixel {
-    ($store:expr, $x:expr, $y:expr) => {{ $store.pixel($x.into_box_state($store), $y.into_box_state($store)) }};
-}
-
-#[macro_export]
-macro_rules! into_maxel {
-    ($store:expr, [$([$x:expr, $y:expr]),* $(,)?]) => {
-        {
-            use $crate::IntoBoxState;
-            let mut result = $crate::RawBoxOwned::<$crate::MaxelBox>::new();
-            result.colors.push($crate::Color::Black);
-            result.multiplicities.push(malachite::Natural::from(1_u32));
-            result.lengths.push(1);
-            $(
-                let x_state = ($x).into_box_state($store);
-                let y_state = ($y).into_box_state($store);
-                let x_raw = x_state.as_raw($store);
-                let y_raw = y_state.as_raw($store);
-                let pix = $store.pixel_raw(x_raw, y_raw);
-                result.extend(pix);
-            )*
-            $crate::BoxState::Uncommitted(result)
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! into_vexel {
-    ($store:expr, [$($x:expr),* $(,)?]) => {
-        {
-            let mut result = $crate::RawBoxOwned::<VexelBox>::new();
-            result.colors.push(Color::Black);
-            result.multiplicities.push(Natural::from(1_u32));
-            result.lengths.push(1);
-            $(
-                let state = ($x).into_box_state($store);
-                let unix = $store.unix_raw(state.as_raw($store));
-                result.extend(unix);
-            )*
-            result
-        }
-    };
-}
-
 // impl BoxStore {
 //     /// Inspects the serialized manifest to safely reconstruct a strongly-typed handle
 //     pub fn get_typed_root<T: BoxType>(&self, index: u32) -> Option<BoxId<T>> {
@@ -1319,40 +1274,5 @@ mod tests {
         let prod = store.mul(&s1, &s2);
         let expected = store.add(&one, &minus_2_alpha);
         assert_eq!(prod, expected);
-    }
-
-    #[test]
-    fn test_pixel() {
-        let store = BoxStore::new();
-
-        let p1 = into_pixel!(&store, 1, 2);
-        let p2 = into_pixel!(&store, 2, 3);
-        let p3 = store.mul_pixel(&p1, &p2);
-        let expected = into_pixel!(&store, 1, 3);
-
-        assert_eq!(p3, Some(expected));
-
-        let p4 = into_pixel!(&store, 3, 2);
-        let p5 = store.mul_pixel(&p1, &p4);
-        assert!(p5.is_none());
-    }
-
-    #[test]
-    fn test_maxel() {
-        let store = BoxStore::new();
-        let a = into_maxel![&store, [[1, 1], [1, 2], [2, 2]]].into_box_state(&store);
-        let b = into_maxel![&store, [[1, 2], [2, 1]]].into_box_state(&store);
-
-        let prod = store.mul_maxel(&a, &b);
-        let expected = into_maxel![&store, [[1, 1], [1, 2], [2, 1]]].into_box_state(&store);
-        assert_eq!(prod, expected);
-    }
-
-    #[test]
-    fn test_vexel() {
-        let store = BoxStore::new();
-        let v = into_vexel!(&store, [4, 2, 3]);
-        let v_raw = v.as_raw();
-        println!("{v_raw:#}");
     }
 }

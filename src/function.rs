@@ -46,7 +46,7 @@ impl BoxStore {
 #[cfg(test)]
 mod tests {
     use crate::{
-        into_maxel, {AnyBox, BoxStore, IntoBoxState},
+        maxel, {AnyBox, BoxStore, IntoBoxState},
     };
 
     #[test]
@@ -62,8 +62,8 @@ mod tests {
         let alpha = store.alpha();
         let alpha_2 = store.mul(&alpha, &alpha);
         let poly = store.add(&six, &alpha_2);
-        let f_box = into_maxel![&store, [[0, 3], [alpha, 1], [3, 1], [2, poly], [4, 5]]]
-            .into_box_state(&store);
+        let f_box =
+            maxel![&store, [[0, 3], [alpha, 1], [3, 1], [2, poly], [4, 5]]].into_box_state(&store);
         assert!(store.is_function(&f_box));
 
         let alpha = store.alpha();
@@ -86,10 +86,10 @@ mod tests {
         ];
         assert_eq!(store.range(&f_box), range);
 
-        let g_box = into_maxel![&store, [[0, 0], [3, 8], [1, 8]]].into_box_state(&store);
+        let g_box = maxel![&store, [[0, 0], [3, 8], [1, 8]]].into_box_state(&store);
         let prod = store.mul_maxel(&f_box, &g_box);
         let prod_comm = prod.commit(&mut store);
-        let exp = into_maxel![&store, [[0, 8], [alpha, 8], [3, 8]]];
+        let exp = maxel![&store, [[0, 8], [alpha, 8], [3, 8]]];
         let exp_comm = exp.sort_and_commit(&mut store);
         assert_eq!(prod_comm, exp_comm);
     }
