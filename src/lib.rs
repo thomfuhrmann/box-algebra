@@ -2,7 +2,6 @@ use malachite::Natural;
 use strum::{EnumDiscriminants, EnumString};
 
 use std::{
-    any::{Any, TypeId},
     cmp::Ordering::Equal,
     hash::{BuildHasher, Hash, Hasher},
     marker::PhantomData,
