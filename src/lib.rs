@@ -8,7 +8,7 @@ use std::{
     ops::{Add, Mul},
 };
 
-use rapidhash::{HashMapExt, RapidHashMap, fast::RandomState};
+use rapidhash::fast::RandomState;
 
 pub mod add;
 pub mod derivative;
@@ -17,6 +17,7 @@ pub mod function;
 pub mod maxel;
 pub mod mul;
 pub mod set;
+pub mod store;
 
 /// Kind of boxes that can exist in a store
 #[derive(Debug, Clone, Hash, EnumDiscriminants)]
@@ -61,7 +62,7 @@ impl BoxVariant {
     }
 }
 
-/// Traits that describes the type of a box
+/// Traits for types of boxes
 pub trait BoxType: Sized + Clone {
     const KIND: BoxKind;
 }
@@ -70,6 +71,7 @@ pub trait Num: BoxType {}
 pub trait Polynum: Num {}
 pub trait Multinum: Polynum {}
 
+/// Implementations of the [`BoxType`] trait
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnyBox;
 impl BoxType for AnyBox {
@@ -663,54 +665,5 @@ impl Mul<Color> for Color {
             (Color::Red, Color::Black) => Color::Red,
             (Color::Red, Color::Red) => Color::Black,
         }
-    }
-}
-
-/// Global store for box computations
-#[derive(Debug)]
-pub struct BoxStore {
-    /// Store boxes by their hash
-    pub boxes: RapidHashMap<u64, BoxVariant>,
-    /// Look up table for variable names
-    pub variables: RapidHashMap<String, u64>,
-}
-
-impl Default for BoxStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl BoxStore {
-    /// Initialize the store
-    pub fn new() -> Self {
-        let boxes = RapidHashMap::new();
-        let variables = RapidHashMap::new();
-
-        Self { boxes, variables }
-    }
-
-    // Store a box by its hash
-    pub fn store_box(&mut self, value: BoxVariant) {
-        let hash = self.boxes.hasher().hash_one(&value);
-        self.boxes.insert(hash, value);
-    }
-
-    /// Stores a box and binds it to a variable name
-    pub fn store_box_with_name(&mut self, name: String, value: BoxVariant) {
-        let hash = self.boxes.hasher().hash_one(&value);
-        self.variables.insert(name, hash);
-        self.boxes.insert(hash, value);
-    }
-
-    /// Fetch a box from the store by its name
-    pub fn fetch_box_by_name(&self, name: &str) -> Option<BoxVariant> {
-        let hash = self.variables.get(name)?;
-        self.boxes.get(hash).cloned()
-    }
-
-    /// Fetch a box from the store by its hash
-    pub fn fetch_box_by_hash(&self, hash: u64) -> Option<BoxVariant> {
-        self.boxes.get(&hash).cloned()
     }
 }
