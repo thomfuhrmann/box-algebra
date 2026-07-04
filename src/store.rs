@@ -35,9 +35,10 @@ impl BoxStore {
     }
 
     /// Store a box and bind it to a variable name
-    pub fn store_box_with_name(&mut self, name: String, value: BoxVariant) {
+    pub fn store_box_with_name(&mut self, name: impl Into<String>, value: impl Into<BoxVariant>) {
+        let value = value.into();
         let hash = self.boxes.hasher().hash_one(&value);
-        self.variables.insert(name, hash);
+        self.variables.insert(name.into(), hash);
         self.boxes.insert(hash, value);
     }
 

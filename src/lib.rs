@@ -1,4 +1,4 @@
-use malachite::Natural;
+use malachite::{Integer, Natural, base::num::arithmetic::traits::UnsignedAbs};
 use strum::{EnumDiscriminants, EnumString};
 
 use std::{
@@ -16,6 +16,7 @@ pub mod display;
 pub mod function;
 pub mod maxel;
 pub mod mul;
+pub mod parser;
 pub mod set;
 pub mod store;
 
@@ -36,7 +37,7 @@ pub enum BoxVariant {
 }
 
 impl BoxVariant {
-    pub fn into_any_box(self) -> BoxValue<AnyBox> {
+    pub fn into_any(self) -> BoxValue<AnyBox> {
         match self {
             BoxVariant::Box(v) => v,
             BoxVariant::Num(v) => v.cast(),
@@ -49,16 +50,61 @@ impl BoxVariant {
             BoxVariant::Set(v) => v.cast(),
         }
     }
+}
 
-    pub fn is_numbox(&self) -> bool {
-        matches!(self, BoxVariant::Num(_))
+pub trait IntoVariant: BoxType {
+    fn into_variant(value: BoxValue<Self>) -> BoxVariant;
+}
+
+impl IntoVariant for AnyBox {
+    fn into_variant(v: BoxValue<Self>) -> BoxVariant {
+        BoxVariant::Box(v)
     }
+}
+impl IntoVariant for NumBox {
+    fn into_variant(v: BoxValue<Self>) -> BoxVariant {
+        BoxVariant::Num(v)
+    }
+}
+impl IntoVariant for PolynumBox {
+    fn into_variant(v: BoxValue<Self>) -> BoxVariant {
+        BoxVariant::Polynum(v)
+    }
+}
+impl IntoVariant for MultinumBox {
+    fn into_variant(v: BoxValue<Self>) -> BoxVariant {
+        BoxVariant::Multinum(v)
+    }
+}
+impl IntoVariant for UnixelBox {
+    fn into_variant(v: BoxValue<Self>) -> BoxVariant {
+        BoxVariant::Unixel(v)
+    }
+}
+impl IntoVariant for VexelBox {
+    fn into_variant(v: BoxValue<Self>) -> BoxVariant {
+        BoxVariant::Vexel(v)
+    }
+}
+impl IntoVariant for PixelBox {
+    fn into_variant(v: BoxValue<Self>) -> BoxVariant {
+        BoxVariant::Pixel(v)
+    }
+}
+impl IntoVariant for MaxelBox {
+    fn into_variant(v: BoxValue<Self>) -> BoxVariant {
+        BoxVariant::Maxel(v)
+    }
+}
+impl IntoVariant for SetBox {
+    fn into_variant(v: BoxValue<Self>) -> BoxVariant {
+        BoxVariant::Set(v)
+    }
+}
 
-    pub fn into_numbox(self) -> Result<BoxValue<NumBox>, Self> {
-        match self {
-            BoxVariant::Num(v) => Ok(v),
-            other => Err(other),
-        }
+impl<T: IntoVariant> From<BoxValue<T>> for BoxVariant {
+    fn from(value: BoxValue<T>) -> Self {
+        T::into_variant(value)
     }
 }
 
@@ -152,6 +198,9 @@ macro_rules! impl_box_add {
     };
 }
 
+//  impl_box_add!(AnyBox, NumBox => AnyBox);
+//  impl_box_add!(AnyBox, PolynumBox => AnyBox);
+//  impl_box_add!(AnyBox, MultinumBox => AnyBox);
 impl_box_add!(NumBox, PolynumBox => PolynumBox);
 impl_box_add!(NumBox, MultinumBox => MultinumBox);
 impl_box_add!(PolynumBox, MultinumBox => MultinumBox);
@@ -485,6 +534,32 @@ impl From<i32> for BoxValue<NumBox> {
 
 impl From<i64> for BoxValue<NumBox> {
     fn from(value: i64) -> Self {
+        let zero = if value >= 0 {
+            Self::zero()
+        } else {
+            Self::anti_zero()
+        };
+
+        if value == 0 {
+            return zero;
+        }
+
+        zero.wrap(value.unsigned_abs())
+    }
+}
+
+impl From<Natural> for BoxValue<NumBox> {
+    fn from(value: Natural) -> Self {
+        let zero = Self::zero();
+        if value == 0 {
+            return zero;
+        }
+        zero.wrap(value)
+    }
+}
+
+impl From<Integer> for BoxValue<NumBox> {
+    fn from(value: Integer) -> Self {
         let zero = if value >= 0 {
             Self::zero()
         } else {
