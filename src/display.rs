@@ -3,7 +3,7 @@ use std::fmt::Display;
 use colored::Colorize;
 use malachite::Natural;
 
-use crate::{BoxType, RawBox};
+use crate::{BoxType, BoxValue};
 
 /// Helper function to display multiplicities as subscripts
 fn to_subscript(num: Natural) -> String {
@@ -25,7 +25,7 @@ fn to_subscript(num: Natural) -> String {
         .collect()
 }
 
-impl<T: BoxType> Display for RawBox<'_, T> {
+impl<T: BoxType> Display for BoxValue<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // ⌊ ... ⌋
         let open = if self.is_anti() {
@@ -48,8 +48,8 @@ impl<T: BoxType> Display for RawBox<'_, T> {
             }
             first = false;
 
-            let len = child.length(0);
-            let mult = child.multiplicity(0);
+            let len = child.get_length(0);
+            let mult = child.get_multiplicity(0);
             if len > 1 {
                 if f.alternate() {
                     if mult > 1 {
@@ -96,40 +96,30 @@ impl<T: BoxType> Display for RawBox<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use malachite::Natural;
 
-    use crate::{BoxStore, Color, NumBox};
+    use crate::BoxValue;
 
     #[test]
     fn test_display() {
-        let store = BoxStore::new();
-        let three = store.from_u32(3);
-        let three_raw = three.as_raw(&store);
-        println!("{three_raw:#}");
+        let three = BoxValue::from(3);
+        println!("{three}");
+        println!("{three:#}");
 
-        let minus_two = store.from_i32(-2);
-        let minus_two_raw = minus_two.as_raw(&store);
-        println!("{minus_two_raw}");
+        let minus_two = BoxValue::from(-2);
+        println!("{minus_two}");
+        println!("{minus_two:#}");
 
-        let sum = store.add_raw(three_raw, minus_two_raw);
-        let sum_raw = sum.as_raw();
-        println!("{sum_raw}");
+        let sum = three + minus_two.clone();
+        println!("{sum}");
 
-        let alpha = store.alpha();
-        let alpha_raw = alpha.as_raw(&store);
-        println!("{alpha_raw}");
+        let alpha = BoxValue::alpha();
+        println!("{alpha}");
 
-        let poly_1 = store.add_raw(minus_two_raw, alpha_raw);
-        let poly_2 = store.add_raw(poly_1.as_raw(), alpha_raw);
-        let alpha_2 = store.mul_raw(alpha_raw, alpha_raw);
-        let poly_3 = store.add_raw(poly_2.as_raw(), alpha_2.as_raw());
-        let poly_4 = store.add_raw(poly_3.as_raw(), three_raw);
-        let poly_4_raw = poly_4.as_raw();
-        println!("{poly_4_raw}");
-        println!("{poly_4_raw:#}");
+        let poly = minus_two + 2_u32 * alpha + BoxValue::alpha() * BoxValue::alpha();
+        println!("{poly}");
+        println!("{poly:#}");
 
-        let anti_box = store.wrap_in_box::<NumBox>(&store.zero(), Color::Red, Natural::from(4_u32));
-        let anti_box_raw = anti_box.as_raw(&store);
-        println!("{anti_box_raw:#}");
+        let anti_box = BoxValue::from(1).into_anti();
+        println!("{anti_box}");
     }
 }
