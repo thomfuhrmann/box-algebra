@@ -1,230 +1,355 @@
-use crate::{BoxValue, BoxVariant, Color, store::BoxStore};
+use crate::{BoxValue, BoxVariant, store::BoxStore};
 
+use chumsky::prelude::*;
 use logos::{Lexer, Logos};
 use malachite::Natural;
 
-fn positive(lex: &mut Lexer<Token>) -> Option<Natural> {
+fn parse_subscript(lex: &mut Lexer<Token>) -> Option<Natural> {
     let slice = lex.slice();
-    let n = slice.parse().ok()?;
-    Some(n)
-}
+    let mut result = Natural::from(0_u32);
 
-fn negative(lex: &mut Lexer<Token>) -> Option<Natural> {
-    let slice = lex.slice();
-    let n = slice[1..].parse().ok()?;
-    Some(n)
+    for ch in slice.chars() {
+        let digit: u32 = match ch {
+            '₀' => 0,
+            '₁' => 1,
+            '₂' => 2,
+            '₃' => 3,
+            '₄' => 4,
+            '₅' => 5,
+            '₆' => 6,
+            '₇' => 7,
+            '₈' => 8,
+            '₉' => 9,
+            _ => return None,
+        };
+
+        let digit = Natural::from(digit);
+        let base = Natural::from(10_u32);
+
+        result = base * result + digit;
+    }
+
+    Some(result)
 }
 
 #[derive(Logos, Debug, PartialEq, Clone)]
 #[logos(skip r"[ \t\n\f]+")]
 pub enum Token {
     // Match numbers
-    #[regex(r"[0-9]+", positive)]
-    Pos(Natural),
-    // Match negative numbers
-    #[regex(r"-[0-9]+", negative)]
-    Neg(Natural),
-    // Match variables like 'alpha'
+    #[regex(r"[0-9]+", |lex|lex.slice().parse())]
+    Number(Natural),
+    // Match Vars like 'alpha'
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
-    Identifier(String),
+    Var(String),
     #[token("+")]
     Plus,
+    #[token("-")]
+    Minus,
     #[token("*")]
-    Asterisk,
+    Multiply,
+    #[token("/")]
+    Divide,
     #[token("^")]
     Caret,
-}
-
-impl Token {
-    fn get_binding_power(&self) -> (u8, u8) {
-        match self {
-            Token::Plus => (1, 2),
-            Token::Asterisk => (3, 4),
-            Token::Caret => (6, 5),
-            _ => (0, 0),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Op {
-    Add,
-    Mul,
-    Pow,
+    #[token("(")]
+    OpenGroup,
+    #[token(")")]
+    CloseGroup,
+    #[token("⎣")]
+    OpenBox,
+    #[token("⎦")]
+    CloseBox,
+    #[token("⎡")]
+    OpenList,
+    #[token("⎤")]
+    CloseList,
+    #[token(",")]
+    Comma,
+    #[regex(r"[₀₁₂₃₄₅₆₇₈₉]+", parse_subscript)]
+    Subscript(Natural),
 }
 
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Pos(Natural),
-    Neg(Natural),
-    Variable(String),
-    BinaryOp {
-        op: Op,
-        left: Box<Expr>,
-        right: Box<Expr>,
-    },
+    Num(Natural),
+    Var(String),
+    Neg(Box<Expr>),
+    Add(Box<Expr>, Box<Expr>),
+    Sub(Box<Expr>, Box<Expr>),
+    Mul(Box<Expr>, Box<Expr>),
+    Div(Box<Expr>, Box<Expr>),
+    Unixel(Box<Expr>),
+    Vexel(Vec<Expr>),
+    Pixel(Box<Expr>, Box<Expr>),
+    Maxel(Vec<Expr>),
+    List(Vec<Expr>),
+    Box(Vec<Expr>),
+    Subscript(Natural, Box<Expr>),
 }
 
-#[derive(Debug, Clone)]
-enum ParserState {
-    Token(Token),
-    Error,
-    Eof,
-}
-
-#[derive(Debug)]
-pub struct Parser<'source> {
-    lexer: Lexer<'source, Token>,
-    peeked: Option<ParserState>,
-}
-
-impl<'source> Parser<'source> {
-    /// Create a new parser from source
-    pub fn new(source: &'source str) -> Self {
-        Self {
-            lexer: Token::lexer(source),
-            peeked: None,
-        }
-    }
-
-    /// Internal helper to fill the peek cache if it's empty
-    fn fill_cache(&mut self) {
-        if self.peeked.is_none() {
-            let next_state = match self.lexer.next() {
-                Some(Ok(token)) => ParserState::Token(token),
-                Some(Err(_)) => ParserState::Error,
-                None => ParserState::Eof,
+pub fn parser<'src>()
+-> impl Parser<'src, &'src [Token], Expr, chumsky::extra::Err<chumsky::error::Simple<'src, Token>>>
+{
+    recursive(|p| {
+        let atom = {
+            let number = select! {
+                Token::Number(n) => Expr::Num(n),
             };
-            self.peeked = Some(next_state);
-        }
-    }
 
-    /// Look ahead at the next state without moving the cursor
-    fn peek(&mut self) -> ParserState {
-        self.fill_cache();
-        self.peeked.clone().unwrap()
-    }
+            let var = select! { Token::Var(name) => Expr::Var(name) };
 
-    /// Consume the token and move forward
-    fn advance(&mut self) -> ParserState {
-        self.fill_cache();
-        self.peeked.take().unwrap()
-    }
-}
+            let unary_minus = just(Token::Minus)
+                .then(p.clone())
+                .map(|(_, expr)| Expr::Neg(Box::new(expr)));
 
-impl<'source> Parser<'source> {
-    pub fn parse(&mut self) -> Expr {
-        self.parse_expr(0)
-    }
+            let subscript_prefix =
+                any::<&[Token], extra::Err<Simple<Token>>>().filter_map(|token| match token {
+                    Token::Subscript(num) => Some(num),
+                    _ => None,
+                });
 
-    fn parse_expr(&mut self, min_bp: u8) -> Expr {
-        // parse prefix (must be a value, not an operator)
-        let mut expr = match self.advance() {
-            ParserState::Token(Token::Pos(n)) => Expr::Pos(n),
-            ParserState::Token(Token::Neg(n)) => Expr::Neg(n),
-            ParserState::Token(Token::Identifier(s)) => Expr::Variable(s),
-            ParserState::Error => panic!("Lexer encountered an invalid token"),
-            ParserState::Eof => panic!("Syntax Error: Unexpected EOF"),
-            _ => panic!("Syntax Error: Expected an atomic expression"),
+            let unixel = p
+                .clone()
+                .delimited_by(just(Token::OpenList), just(Token::CloseList))
+                .map(|v| Expr::Unixel(Box::new(v)));
+
+            let unixel_with_subscript =
+                subscript_prefix
+                    .or_not()
+                    .then(unixel)
+                    .map(|(sub, expr)| match sub {
+                        Some(num) => Expr::Subscript(num, Box::new(expr)),
+                        None => expr,
+                    });
+
+            let vexel = unixel_with_subscript
+                .separated_by(just(Token::Comma))
+                .collect::<Vec<_>>()
+                .delimited_by(just(Token::OpenBox), just(Token::CloseBox))
+                .map(Expr::Vexel);
+
+            let pixel = p
+                .clone()
+                .then_ignore(just(Token::Comma))
+                .then(p.clone())
+                .delimited_by(just(Token::OpenList), just(Token::CloseList))
+                .map(|(left, right)| Expr::Pixel(Box::new(left), Box::new(right)));
+
+            let pixel_with_subscript =
+                subscript_prefix
+                    .or_not()
+                    .then(pixel)
+                    .map(|(sub, expr)| match sub {
+                        Some(num) => Expr::Subscript(num, Box::new(expr)),
+                        None => expr,
+                    });
+
+            let maxel = pixel_with_subscript
+                .separated_by(just(Token::Comma))
+                .collect::<Vec<_>>()
+                .delimited_by(just(Token::OpenBox), just(Token::CloseBox))
+                .map(Expr::Maxel);
+
+            let list = subscript_prefix
+                .or_not()
+                .then(p.clone())
+                .map(|(sub, expr)| match sub {
+                    Some(num) => Expr::Subscript(num, Box::new(expr)),
+                    None => expr,
+                })
+                .separated_by(just(Token::Comma))
+                .collect::<Vec<_>>()
+                .delimited_by(just(Token::OpenList), just(Token::CloseList))
+                .map(Expr::List);
+
+            let any_box = subscript_prefix
+                .or_not()
+                .then(p.clone())
+                .map(|(sub, expr)| match sub {
+                    Some(num) => Expr::Subscript(num, Box::new(expr)),
+                    None => expr,
+                })
+                .separated_by(just(Token::Comma))
+                .collect::<Vec<_>>()
+                .delimited_by(just(Token::OpenBox), just(Token::CloseBox))
+                .map(Expr::Box);
+
+            let parenthesized = p
+                .clone()
+                .delimited_by(just(Token::OpenGroup), just(Token::CloseGroup));
+
+            number
+                .or(unary_minus)
+                .or(var)
+                .or(vexel)
+                .or(maxel)
+                .or(list)
+                .or(any_box)
+                .or(parenthesized)
         };
 
-        // process infix operations
-        loop {
-            let next = self.peek();
-
-            let token = match next {
-                ParserState::Token(tok) => tok,
-                ParserState::Eof | ParserState::Error => break,
-            };
-
-            let (left_bp, right_bp) = token.get_binding_power();
-            if left_bp < min_bp {
-                break;
-            }
-
-            // We know it's an operator, consume it securely
-            let op = match self.advance() {
-                ParserState::Token(Token::Plus) => Op::Add,
-                ParserState::Token(Token::Asterisk) => Op::Mul,
-                ParserState::Token(Token::Caret) => Op::Pow,
+        let prod = atom.clone().foldl(
+            just(Token::Multiply)
+                .or(just(Token::Divide))
+                .then(atom)
+                .repeated(),
+            |lhs, (op, rhs)| match op {
+                Token::Multiply => Expr::Mul(Box::new(lhs), Box::new(rhs)),
+                Token::Divide => Expr::Div(Box::new(lhs), Box::new(rhs)),
                 _ => unreachable!(),
-            };
+            },
+        );
 
-            let right = self.parse_expr(right_bp);
-
-            expr = Expr::BinaryOp {
-                op,
-                left: Box::new(expr),
-                right: Box::new(right),
-            };
-        }
-
-        expr
-    }
+        prod.clone().foldl(
+            just(Token::Plus)
+                .or(just(Token::Minus))
+                .then(prod)
+                .repeated(),
+            |lhs, (op, rhs)| match op {
+                Token::Plus => Expr::Add(Box::new(lhs), Box::new(rhs)),
+                Token::Minus => Expr::Sub(Box::new(lhs), Box::new(rhs)),
+                _ => unreachable!(),
+            },
+        )
+    })
 }
 
 impl Expr {
-    pub fn eval(self, store: &BoxStore) -> BoxVariant {
+    pub fn eval(&self, store: &BoxStore) -> BoxVariant {
         match self {
-            Expr::Pos(n) => {
-                // Convert raw number
-                BoxVariant::Num(BoxValue::from(n))
+            Expr::Subscript(n, v) => {
+                let mut variant = v.eval(store);
+                variant.set_multiplicity(0, n.clone());
+                variant
             }
-            Expr::Neg(n) => {
-                // Convert raw negative number
-                let mut num = BoxValue::from(n);
-                num.set_color(1, Color::Red);
-                BoxVariant::Num(num)
+            Expr::Num(n) => BoxVariant::Num(BoxValue::from(n.clone())),
+            Expr::Neg(rhs) => BoxVariant::Num(BoxValue::from(-1)) * rhs.eval(store),
+            Expr::Add(lhs, rhs) => lhs.eval(store) + rhs.eval(store),
+            Expr::Mul(lhs, rhs) => lhs.eval(store) * rhs.eval(store),
+            Expr::Sub(lhs, rhs) => {
+                lhs.eval(store) + BoxVariant::Num(BoxValue::from(-1)) * rhs.eval(store)
             }
-            Expr::Variable(name) => store
-                .fetch_box_by_name(&name)
-                .expect("Undefined variable assignment"),
-            Expr::BinaryOp { op, left, right } => {
-                let left_val = left.eval(store);
-                let right_val = right.eval(store);
-
-                match op {
-                    Op::Add => match (left_val, right_val) {
-                        (BoxVariant::Num(l), BoxVariant::Num(r)) => BoxVariant::Num(l + r),
-                        (BoxVariant::Num(l), BoxVariant::Polynum(r)) => BoxVariant::Polynum(l + r),
-                        (BoxVariant::Polynum(l), BoxVariant::Num(r)) => BoxVariant::Polynum(l + r),
-                        (BoxVariant::Polynum(l), BoxVariant::Polynum(r)) => {
-                            BoxVariant::Polynum(l + r)
-                        }
-                        (l, r) => panic!("Type Error: Cannot add variant {:?} to {:?}", l, r),
-                    },
-                    Op::Mul => match (left_val, right_val) {
-                        (BoxVariant::Num(l), BoxVariant::Num(r)) => BoxVariant::Num(l * r),
-                        (BoxVariant::Num(l), BoxVariant::Polynum(r)) => BoxVariant::Polynum(l * r),
-                        (BoxVariant::Polynum(l), BoxVariant::Num(r)) => BoxVariant::Polynum(l * r),
-                        (BoxVariant::Polynum(l), BoxVariant::Polynum(r)) => {
-                            BoxVariant::Polynum(l * r)
-                        }
-                        (l, r) => panic!("Type Error: Cannot add variant {:?} to {:?}", l, r),
-                    },
-                    Op::Pow => {
-                        todo!()
+            // Expr::Div(lhs, rhs) => todo!(),
+            Expr::Var(name) => store
+                .fetch_box_by_name(name)
+                .expect("Undefined Var assignment"),
+            Expr::Unixel(x) => BoxVariant::Unixel(BoxValue::unixel(x.eval(store).into_any())),
+            Expr::Vexel(xs) => {
+                let mut vs = Vec::new();
+                for x in xs {
+                    let variant = x.eval(store);
+                    match variant {
+                        BoxVariant::Unixel(v) => vs.push(v),
+                        _ => unreachable!(),
                     }
                 }
+                BoxVariant::Vexel(vs.into())
             }
+            Expr::Pixel(x, y) => BoxVariant::Pixel(BoxValue::pixel(
+                x.eval(store).into_any(),
+                y.eval(store).into_any(),
+            )),
+            Expr::Maxel(pxs) => {
+                let mut vs = Vec::new();
+                for px in pxs {
+                    let variant = px.eval(store);
+                    match variant {
+                        BoxVariant::Pixel(px) => vs.push(px),
+                        _ => unreachable!(),
+                    }
+                }
+
+                BoxVariant::Maxel(vs.into())
+            }
+            Expr::Box(bxs) => {
+                let mut vs = Vec::new();
+                for bx in bxs {
+                    let var = bx.eval(store).into_any();
+                    vs.push(var);
+                }
+                BoxVariant::Any(vs.into())
+            }
+            _ => todo!(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{BoxValue, parser::Parser, store::BoxStore};
+    use logos::Logos;
+
+    use crate::{
+        BoxValue,
+        parser::{Parser, Token, parser},
+        store::BoxStore,
+    };
 
     #[test]
     fn test_parse() {
         let mut store = BoxStore::new();
         let alpha = BoxValue::alpha();
         store.store_box_with_name("alpha", alpha);
-        let input = "-2 + -2*alpha + 5*alpha*alpha";
-        let mut parser = Parser::new(input);
-        let expr = parser.parse();
-        let val = expr.eval(&store).into_any();
 
-        println!("{:#}", val);
+        let input = "-2 + 3 - 2*alpha + 5*alpha*alpha";
+        let lexer = Token::lexer(input);
+        let mut tokens = vec![];
+        for (token, span) in lexer.spanned() {
+            match token {
+                Ok(token) => tokens.push(token),
+                Err(e) => {
+                    println!("lexer error at {:?}: {:?}", span, e);
+                    return;
+                }
+            }
+        }
+
+        // parse the tokens to construct an AST
+        let ast = match parser().parse(&tokens).into_result() {
+            Ok(expr) => {
+                println!("[AST]\n{:#?}", expr);
+                expr
+            }
+            Err(e) => {
+                println!("parse error: {:#?}", e);
+                return;
+            }
+        };
+
+        // evaluates the AST to get the result
+        let val = ast.eval(&store);
+        println!("\n[result]\n{:?}", val);
+
+        let input = "⎣₂⎡2,3⎤,⎡4,6⎤⎦";
+        // let input = "⎣⎡2⎤,⎡4⎤,⎡3⎤,⎡6⎤⎦";
+        // let input = "⎡2,3,4,5⎤";
+        // let input = "⎣₂⎣2,3⎦,⎣4,6⎦⎦";
+        let lexer = Token::lexer(input);
+        let mut tokens = vec![];
+        for (token, span) in lexer.spanned() {
+            match token {
+                Ok(token) => tokens.push(token),
+                Err(e) => {
+                    println!("lexer error at {:?}: {:?}", span, e);
+                    return;
+                }
+            }
+        }
+
+        // parse the tokens to construct an AST
+        let ast = match parser().parse(&tokens).into_result() {
+            Ok(expr) => {
+                println!("[AST]\n{:#?}", expr);
+                expr
+            }
+            Err(e) => {
+                println!("parse error: {:#?}", e);
+                return;
+            }
+        };
+
+        // evaluates the AST to get the result
+        let val = ast.eval(&store);
+
+        println!("\n[result]\n{:#}", val);
     }
 }

@@ -28,7 +28,7 @@ impl BoxStore {
         Self { boxes, variables }
     }
 
-    // Store a box by its hash
+    // Store a box
     pub fn store_box(&mut self, value: BoxVariant) {
         let hash = self.boxes.hasher().hash_one(&value);
         self.boxes.insert(hash, value);

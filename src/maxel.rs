@@ -1,5 +1,6 @@
 //! Maxel is an extension of matrices into the world of boxes
 
+use crate::{AnyBox, BoxType, BoxValue, Color, MaxelBox, PixelBox, UnixelBox, VexelBox};
 use malachite::Natural;
 
 impl BoxValue<UnixelBox> {
@@ -19,7 +20,7 @@ impl BoxValue<UnixelBox> {
         result
     }
 
-    /// Returns the box inside the unixel
+    /// Return the box inside the unixel
     pub fn x(&self) -> BoxValue<AnyBox> {
         let x_len = self.get_length(1) as usize;
         BoxValue::new_with(
@@ -30,9 +31,22 @@ impl BoxValue<UnixelBox> {
     }
 }
 
-use crate::{AnyBox, BoxType, BoxValue, Color, MaxelBox, PixelBox, UnixelBox, VexelBox};
+impl From<Vec<BoxValue<UnixelBox>>> for BoxValue<VexelBox> {
+    /// Create a vexel from unixels
+    fn from(value: Vec<BoxValue<UnixelBox>>) -> Self {
+        let mut result = BoxValue::new();
+        result.colors.push(Color::Black);
+        result.multiplicities.push(malachite::Natural::from(1_u32));
+        result.lengths.push(1);
+        for pix in value {
+            result.extend(pix);
+        }
+        result
+    }
+}
+
 impl BoxValue<PixelBox> {
-    /// Create a pixel out of two boxes
+    /// Create a pixel from two boxes
     pub fn pixel<X: BoxType, Y: BoxType>(x: BoxValue<X>, y: BoxValue<Y>) -> Self {
         let x_len = x.get_length(0);
         let y_len = y.get_length(0);
@@ -53,7 +67,7 @@ impl BoxValue<PixelBox> {
         result
     }
 
-    /// Returns the first child of a pixel
+    /// Return the first child of a pixel
     pub fn x(&self) -> BoxValue<AnyBox> {
         let x_len = self.get_length(1) as usize;
         BoxValue::new_with(
@@ -63,7 +77,7 @@ impl BoxValue<PixelBox> {
         )
     }
 
-    /// Returns the second child of a pixel
+    /// Return the second child of a pixel
     pub fn y(&self) -> BoxValue<AnyBox> {
         let x_len = self.get_length(1) as usize;
         let y_idx = 1 + x_len;
@@ -99,6 +113,19 @@ impl BoxValue<PixelBox> {
         }
 
         None
+    }
+}
+
+impl From<Vec<BoxValue<PixelBox>>> for BoxValue<MaxelBox> {
+    fn from(value: Vec<BoxValue<PixelBox>>) -> Self {
+        let mut result = BoxValue::<MaxelBox>::new();
+        result.colors.push(Color::Black);
+        result.multiplicities.push(malachite::Natural::from(1_u32));
+        result.lengths.push(1);
+        for pix in value {
+            result.extend(pix);
+        }
+        result
     }
 }
 

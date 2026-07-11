@@ -11,6 +11,7 @@ license = "MIT"
 exclude = ["src/main.rs"]
 
 [dependencies]
+chumsky = "0.13.0"
 colored = "3.1.1"
 crossterm = "0.29.0"
 logos = "0.16.1"

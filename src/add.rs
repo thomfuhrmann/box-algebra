@@ -38,16 +38,15 @@ impl<L: BoxType + BoxAdd<R>, R: BoxType> Add<BoxValue<R>> for BoxValue<L> {
     type Output = BoxValue<L::Output>;
 
     fn add(self, rhs: BoxValue<R>) -> Self::Output {
-        let mut result = BoxValue::<L::Output>::new();
-        let mut unique_children: RapidHashMap<u64, BoxValue<AnyBox>> = RapidHashMap::default();
-
         let lhs_col = self.get_color(0);
         let rhs_col = rhs.get_color(0);
 
+        let mut result = BoxValue::<L::Output>::new();
         result.colors.push(lhs_col + rhs_col);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1);
 
+        let mut unique_children: RapidHashMap<u64, BoxValue<AnyBox>> = RapidHashMap::default();
         self.add_child_boxes(&mut unique_children);
         rhs.add_child_boxes(&mut unique_children);
 

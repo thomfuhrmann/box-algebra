@@ -3,7 +3,7 @@ use std::fmt::Display;
 use colored::Colorize;
 use malachite::Natural;
 
-use crate::{BoxType, BoxValue};
+use crate::{BoxKind, BoxType, BoxValue, PixelBox};
 
 /// Helper function to display multiplicities as subscripts
 fn to_subscript(num: Natural) -> String {
@@ -27,16 +27,28 @@ fn to_subscript(num: Natural) -> String {
 
 impl<T: BoxType> Display for BoxValue<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // ⌊ ... ⌋
-        let open = if self.is_anti() {
-            "⌊".red()
+        // ⎣...⎦
+        // ⎡...⎤
+        let kind = self.kind();
+        let open_bracket = if kind == BoxKind::Vexel || kind == BoxKind::Pixel {
+            "⎡"
         } else {
-            "⌊".black()
+            "⎣"
+        };
+        let close_bracket = if kind == BoxKind::Vexel || kind == BoxKind::Pixel {
+            "⎤"
+        } else {
+            "⎦"
+        };
+        let open = if self.is_anti() {
+            open_bracket.red()
+        } else {
+            open_bracket.black()
         };
         let close = if self.is_anti() {
-            "⌋".red()
+            close_bracket.red()
         } else {
-            "⌋".black()
+            close_bracket.black()
         };
 
         write!(f, "{}", open)?;
@@ -44,7 +56,7 @@ impl<T: BoxType> Display for BoxValue<T> {
         let mut first = true;
         for child in self.clone() {
             if !first {
-                write!(f, " ")?;
+                write!(f, ",")?;
             }
             first = false;
 
@@ -60,17 +72,17 @@ impl<T: BoxType> Display for BoxValue<T> {
                 } else if let Ok(count) = usize::try_from(&mult) {
                     for i in 0..count {
                         if i > 0 {
-                            write!(f, " ")?;
+                            write!(f, ",")?;
                         }
                         child.fmt(f)?;
                     }
                 }
             } else {
-                // ■ □
+                // ■ □ ⧠
                 let symbol = if child.is_anti() {
-                    "□".red()
+                    "⧠".red()
                 } else {
-                    "□".black()
+                    "⧠".black()
                 };
 
                 if f.alternate() {
@@ -82,7 +94,7 @@ impl<T: BoxType> Display for BoxValue<T> {
                 } else if let Ok(count) = usize::try_from(&mult) {
                     for i in 0..count {
                         if i > 0 {
-                            write!(f, " ")?;
+                            write!(f, ",")?;
                         }
                         write!(f, "{}", symbol)?;
                     }

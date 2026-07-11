@@ -3,6 +3,7 @@ use strum::{EnumDiscriminants, EnumString};
 
 use std::{
     cmp::Ordering::Equal,
+    fmt::{self, Display, Formatter},
     hash::{BuildHasher, Hash, Hasher},
     marker::PhantomData,
     ops::{Add, Mul},
@@ -25,7 +26,7 @@ pub mod store;
 #[strum_discriminants(name(BoxKind))]
 #[strum_discriminants(derive(EnumString, Hash))]
 pub enum BoxVariant {
-    Box(BoxValue<AnyBox>),
+    Any(BoxValue<AnyBox>),
     Num(BoxValue<NumBox>),
     Polynum(BoxValue<PolynumBox>),
     Multinum(BoxValue<MultinumBox>),
@@ -36,18 +37,125 @@ pub enum BoxVariant {
     Set(BoxValue<SetBox>),
 }
 
+macro_rules! dispatch {
+    (&$self:ident => $($field:tt)*) => {
+        match $self {
+            BoxVariant::Any(inner) => inner.$($field)*,
+            BoxVariant::Num(inner) => inner.$($field)*,
+            BoxVariant::Polynum(inner) => inner.$($field)*,
+            BoxVariant::Multinum(inner) => inner.$($field)*,
+            BoxVariant::Unixel(inner) => inner.$($field)*,
+            BoxVariant::Vexel(inner) => inner.$($field)*,
+            BoxVariant::Pixel(inner) => inner.$($field)*,
+            BoxVariant::Maxel(inner) => inner.$($field)*,
+            BoxVariant::Set(inner) => inner.$($field)*,
+        }
+    };
+
+    (&mut $self:ident => $($field:tt)*) => {
+        match $self {
+            BoxVariant::Any(inner) => inner.$($field)*,
+            BoxVariant::Num(inner) => inner.$($field)*,
+            BoxVariant::Polynum(inner) => inner.$($field)*,
+            BoxVariant::Multinum(inner) => inner.$($field)*,
+            BoxVariant::Unixel(inner) => inner.$($field)*,
+            BoxVariant::Vexel(inner) => inner.$($field)*,
+            BoxVariant::Pixel(inner) => inner.$($field)*,
+            BoxVariant::Maxel(inner) => inner.$($field)*,
+            BoxVariant::Set(inner) => inner.$($field)*,
+        }
+    };
+
+    ($self:ident => $($field:tt)*) => {
+        match $self {
+            BoxVariant::Any(inner) => inner.$($field)*,
+            BoxVariant::Num(inner) => inner.$($field)*,
+            BoxVariant::Polynum(inner) => inner.$($field)*,
+            BoxVariant::Multinum(inner) => inner.$($field)*,
+            BoxVariant::Unixel(inner) => inner.$($field)*,
+            BoxVariant::Vexel(inner) => inner.$($field)*,
+            BoxVariant::Pixel(inner) => inner.$($field)*,
+            BoxVariant::Maxel(inner) => inner.$($field)*,
+            BoxVariant::Set(inner) => inner.$($field)*,
+        }
+    };
+}
+
 impl BoxVariant {
+    #[inline]
+    pub fn get_color(&self, idx: usize) -> Color {
+        dispatch!(self => colors[idx])
+    }
+
+    #[inline]
+    pub fn get_multiplicity(&self, idx: usize) -> Natural {
+        dispatch!(self => multiplicities[idx].clone())
+    }
+
+    #[inline]
+    pub fn set_color(&mut self, idx: usize, col: Color) {
+        dispatch!(self => colors[idx] = col);
+    }
+
+    #[inline]
+    pub fn set_multiplicity(&mut self, idx: usize, mul: Natural) {
+        dispatch!(self => multiplicities[idx] = mul);
+    }
+
+    #[inline]
     pub fn into_any(self) -> BoxValue<AnyBox> {
+        dispatch!(self => cast())
+    }
+}
+
+impl Display for BoxVariant {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            BoxVariant::Box(v) => v,
-            BoxVariant::Num(v) => v.cast(),
-            BoxVariant::Polynum(v) => v.cast(),
-            BoxVariant::Multinum(v) => v.cast(),
-            BoxVariant::Unixel(v) => v.cast(),
-            BoxVariant::Vexel(v) => v.cast(),
-            BoxVariant::Pixel(v) => v.cast(),
-            BoxVariant::Maxel(v) => v.cast(),
-            BoxVariant::Set(v) => v.cast(),
+            BoxVariant::Any(inner) => write!(f, "{}", inner),
+            BoxVariant::Num(inner) => write!(f, "{}", inner),
+            BoxVariant::Polynum(inner) => write!(f, "{}", inner),
+            BoxVariant::Multinum(inner) => write!(f, "{}", inner),
+            BoxVariant::Unixel(inner) => write!(f, "{}", inner),
+            BoxVariant::Vexel(inner) => write!(f, "{}", inner),
+            BoxVariant::Pixel(inner) => write!(f, "{:#}", inner),
+            BoxVariant::Maxel(inner) => write!(f, "{:#}", inner),
+            BoxVariant::Set(inner) => write!(f, "{}", inner),
+        }
+    }
+}
+
+impl Add for BoxVariant {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (BoxVariant::Num(l), BoxVariant::Num(r)) => BoxVariant::Num(l + r),
+            (BoxVariant::Num(l), BoxVariant::Polynum(r)) => BoxVariant::Polynum(l + r),
+            (BoxVariant::Polynum(l), BoxVariant::Num(r)) => BoxVariant::Polynum(l + r),
+            (BoxVariant::Polynum(l), BoxVariant::Polynum(r)) => BoxVariant::Polynum(l + r),
+            (BoxVariant::Vexel(l), BoxVariant::Vexel(r)) => BoxVariant::Vexel(l + r),
+            (BoxVariant::Maxel(l), BoxVariant::Maxel(r)) => BoxVariant::Maxel(l + r),
+            (l, r) => panic!("Type Error: Cannot add {:?} to {:?}", l, r),
+        }
+    }
+}
+
+impl Mul for BoxVariant {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (BoxVariant::Num(l), BoxVariant::Num(r)) => BoxVariant::Num(l * r),
+            (BoxVariant::Num(l), BoxVariant::Polynum(r)) => BoxVariant::Polynum(l * r),
+            (BoxVariant::Polynum(l), BoxVariant::Num(r)) => BoxVariant::Polynum(l * r),
+            (BoxVariant::Polynum(l), BoxVariant::Polynum(r)) => BoxVariant::Polynum(l * r),
+            (BoxVariant::Maxel(l), BoxVariant::Maxel(r)) => {
+                BoxVariant::Maxel(BoxValue::mul_max(l, r))
+            }
+            (BoxVariant::Maxel(m), BoxVariant::Vexel(v)) => {
+                BoxVariant::Vexel(BoxValue::mul_max_vex(m, v))
+            }
+            (l, r) => panic!("Type Error: Cannot multiply {:?} with {:?}", l, r),
         }
     }
 }
@@ -58,7 +166,7 @@ pub trait IntoVariant: BoxType {
 
 impl IntoVariant for AnyBox {
     fn into_variant(v: BoxValue<Self>) -> BoxVariant {
-        BoxVariant::Box(v)
+        BoxVariant::Any(v)
     }
 }
 impl IntoVariant for NumBox {
@@ -113,15 +221,11 @@ pub trait BoxType: Sized + Clone {
     const KIND: BoxKind;
 }
 
-pub trait Num: BoxType {}
-pub trait Polynum: Num {}
-pub trait Multinum: Polynum {}
-
 /// Implementations of the [`BoxType`] trait
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnyBox;
 impl BoxType for AnyBox {
-    const KIND: BoxKind = BoxKind::Box;
+    const KIND: BoxKind = BoxKind::Any;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,24 +233,18 @@ pub struct NumBox;
 impl BoxType for NumBox {
     const KIND: BoxKind = BoxKind::Num;
 }
-impl Num for NumBox {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PolynumBox;
 impl BoxType for PolynumBox {
     const KIND: BoxKind = BoxKind::Polynum;
 }
-impl Num for PolynumBox {}
-impl Polynum for PolynumBox {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MultinumBox;
 impl BoxType for MultinumBox {
     const KIND: BoxKind = BoxKind::Multinum;
 }
-impl Num for MultinumBox {}
-impl Polynum for MultinumBox {}
-impl Multinum for MultinumBox {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PixelBox;
@@ -178,7 +276,7 @@ impl BoxType for SetBox {
     const KIND: BoxKind = BoxKind::Set;
 }
 
-/// Trait for defining the output type of an addition between two boxes
+/// Trait for the output type of box addition
 pub trait BoxAdd<Rhs = Self> {
     type Output: BoxType;
 }
@@ -198,9 +296,6 @@ macro_rules! impl_box_add {
     };
 }
 
-//  impl_box_add!(AnyBox, NumBox => AnyBox);
-//  impl_box_add!(AnyBox, PolynumBox => AnyBox);
-//  impl_box_add!(AnyBox, MultinumBox => AnyBox);
 impl_box_add!(NumBox, PolynumBox => PolynumBox);
 impl_box_add!(NumBox, MultinumBox => MultinumBox);
 impl_box_add!(PolynumBox, MultinumBox => MultinumBox);
@@ -243,9 +338,21 @@ impl<T: BoxType> Default for BoxValue<T> {
     }
 }
 
+impl From<Vec<BoxValue<AnyBox>>> for BoxValue<AnyBox> {
+    fn from(value: Vec<BoxValue<AnyBox>>) -> Self {
+        let mut result = BoxValue::new();
+        result.colors.push(Color::Black);
+        result.multiplicities.push(malachite::Natural::from(1_u32));
+        result.lengths.push(1);
+        for any_box in value {
+            result.extend(any_box);
+        }
+        result
+    }
+}
+
 impl<T: BoxType> Hash for BoxValue<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        T::KIND.hash(state);
         self.colors.hash(state);
         self.multiplicities.hash(state);
         self.lengths.hash(state);
@@ -253,17 +360,17 @@ impl<T: BoxType> Hash for BoxValue<T> {
 }
 
 impl<T: BoxType> BoxValue<T> {
-    /// Initializes an empty raw box
+    /// Initialize an empty raw box
     pub fn new() -> Self {
         Self {
-            colors: vec![],
-            multiplicities: vec![],
-            lengths: vec![],
+            colors: Vec::new(),
+            multiplicities: Vec::new(),
+            lengths: Vec::new(),
             _marker: PhantomData,
         }
     }
 
-    /// Constructs a box from the given vectors
+    /// Construct a box from the given vectors
     pub fn new_with(colors: Vec<Color>, multiplicities: Vec<Natural>, lengths: Vec<u32>) -> Self {
         Self {
             colors,
@@ -273,33 +380,24 @@ impl<T: BoxType> BoxValue<T> {
         }
     }
 
-    /// Returns the kind of box
+    /// Return the kind of box
     pub fn kind(&self) -> BoxKind {
         T::KIND
     }
 
-    /// Tests if the box is an anti-box
+    /// Test if the box is an anti-box
     pub fn is_anti(&self) -> bool {
         self.get_color(0) == Color::Red
     }
 
-    /// Casts this box to another box type
+    /// Cast this box to another box type
     pub fn cast<U: BoxType>(self) -> BoxValue<U> {
         BoxValue::<U>::new_with(self.colors, self.multiplicities, self.lengths)
     }
 
-    /// Erase the type of the box
-    pub fn erase_type(self) -> BoxValue<AnyBox> {
-        self.cast::<AnyBox>()
-    }
-
-    /// Hashes the content of the box
+    /// Hash the content of the box
     fn hash_content(&self, random_state: &RandomState) -> u64 {
         let mut hasher = random_state.build_hasher();
-        T::KIND.hash(&mut hasher);
-
-        self.colors.len().hash(&mut hasher);
-        self.multiplicities.len().hash(&mut hasher);
 
         self.colors.get(1..).unwrap_or(&[]).hash(&mut hasher);
         self.multiplicities
@@ -307,11 +405,12 @@ impl<T: BoxType> BoxValue<T> {
             .unwrap_or(&[])
             .hash(&mut hasher);
         self.lengths.hash(&mut hasher);
+
         hasher.finish()
     }
 
-    /// Compares the content of the two boxes for equality
-    pub(crate) fn is_eq_content(&self, other: &Self) -> bool {
+    /// Compare the content of the two boxes for equality
+    pub fn is_eq_content(&self, other: &Self) -> bool {
         let left_len = self.get_length(0) as usize;
         let right_len = other.get_length(0) as usize;
 
@@ -319,16 +418,13 @@ impl<T: BoxType> BoxValue<T> {
             return false;
         }
 
-        let left_inner = 1..left_len;
-        let right_inner = 1..right_len;
-
-        self.colors[left_inner.clone()] == other.colors[right_inner.clone()]
-            && self.multiplicities[left_inner.clone()] == other.multiplicities[right_inner.clone()]
-            && self.lengths[left_inner] == other.lengths[right_inner]
+        self.colors[1..] == other.colors[1..]
+            && self.multiplicities[1..] == other.multiplicities[1..]
+            && self.lengths[1..] == other.lengths[1..]
     }
 
-    /// Sorts the immediate child boxes of this box
-    pub(crate) fn sort_immediate_children(&mut self) {
+    /// Sort the immediate child boxes of this box
+    pub fn sort_immediate_children(&mut self) {
         if self.lengths.is_empty() {
             return;
         }
@@ -399,7 +495,7 @@ impl<T: BoxType> BoxValue<T> {
         }
     }
 
-    /// Extends the box with another box
+    /// Extend the box with another box
     pub fn extend(&mut self, value: BoxValue<impl BoxType>) {
         if let Some(len) = self.lengths.get_mut(0) {
             *len += value.get_length(0);
@@ -409,13 +505,13 @@ impl<T: BoxType> BoxValue<T> {
         self.lengths.extend(value.lengths);
     }
 
-    /// Extends the box with another box and multiplicity
+    /// Extend the box with another box and multiplicity
     pub fn extend_with_mul(&mut self, mut value: BoxValue<impl BoxType>, mul: impl Into<Natural>) {
         value.set_multiplicity(0, mul);
         self.extend(value);
     }
 
-    /// Returns the k-th color if it exists
+    /// Return the k-th color if it exists
     ///
     /// # Panics
     /// Panics if the index is out of bounds.
@@ -423,7 +519,7 @@ impl<T: BoxType> BoxValue<T> {
         self.colors[index]
     }
 
-    /// Returns the k-th multiplicity
+    /// Return the k-th multiplicity
     ///
     /// # Panics
     /// Panics if the index is out of bounds.
@@ -431,7 +527,7 @@ impl<T: BoxType> BoxValue<T> {
         self.multiplicities[index].clone()
     }
 
-    /// Returns the k-th length
+    /// Return the k-th length
     ///
     /// # Panics
     /// Panics if the index is out of bounds.
@@ -439,7 +535,7 @@ impl<T: BoxType> BoxValue<T> {
         self.lengths[index]
     }
 
-    /// Sets the k-th color
+    /// Set the k-th color
     ///
     /// # Panics
     /// Panics if the index is out of bounds.
@@ -447,7 +543,7 @@ impl<T: BoxType> BoxValue<T> {
         self.colors[index] = col;
     }
 
-    /// Sets the k-th multiplicity
+    /// Set the k-th multiplicity
     ///
     /// # Panics
     /// Panics if the index is out of bounds.
@@ -455,7 +551,7 @@ impl<T: BoxType> BoxValue<T> {
         self.multiplicities[index] = mul.into();
     }
 
-    /// Sets the k-th length
+    /// Set the k-th length
     ///
     /// # Panics
     /// Panics if the index is out of bounds.
@@ -575,7 +671,7 @@ impl From<Integer> for BoxValue<NumBox> {
 }
 
 impl BoxValue<NumBox> {
-    /// Constructs a black empty box
+    /// Construct a black empty box
     pub fn zero() -> Self {
         let mut raw = BoxValue::new();
         raw.colors.push(Color::Black);
@@ -584,7 +680,7 @@ impl BoxValue<NumBox> {
         raw
     }
 
-    /// Constructs a red empty box
+    /// Construct a red empty box
     pub fn anti_zero() -> Self {
         let mut raw = BoxValue::new();
         raw.colors.push(Color::Red);
@@ -633,7 +729,23 @@ impl<T: BoxType> Iterator for BoxValueIter<T> {
         let multiplicities: Vec<_> = self.raw.multiplicities.drain(0..child_len).collect();
         let lengths: Vec<_> = self.raw.lengths.drain(0..child_len).collect();
 
-        Some(BoxValue::new_with(colors, multiplicities, lengths))
+        // let current_kind = kinds[0];
+
+        let child_value = BoxValue::<AnyBox>::new_with(colors, multiplicities, lengths);
+        Some(child_value)
+        // let variant = match current_kind {
+        //     BoxKind::Any => BoxVariant::Any(child_value.cast()),
+        //     BoxKind::Num => BoxVariant::Num(child_value.cast()),
+        //     BoxKind::Polynum => BoxVariant::Polynum(child_value.cast()),
+        //     BoxKind::Multinum => BoxVariant::Multinum(child_value.cast()),
+        //     BoxKind::Unixel => BoxVariant::Unixel(child_value.cast()),
+        //     BoxKind::Vexel => BoxVariant::Vexel(child_value.cast()),
+        //     BoxKind::Pixel => BoxVariant::Pixel(child_value.cast()),
+        //     BoxKind::Maxel => BoxVariant::Maxel(child_value.cast()),
+        //     BoxKind::Set => BoxVariant::Set(child_value.cast()),
+        // };
+
+        // Some(variant)
     }
 }
 
@@ -645,6 +757,7 @@ impl<T: BoxType> IntoIterator for BoxValue<T> {
         let colors: Vec<_> = self.colors.into_iter().skip(1).collect();
         let multiplicities: Vec<_> = self.multiplicities.into_iter().skip(1).collect();
         let lengths: Vec<_> = self.lengths.into_iter().skip(1).collect();
+
         BoxValueIter {
             raw: BoxValue::new_with(colors, multiplicities, lengths),
         }
@@ -653,23 +766,17 @@ impl<T: BoxType> IntoIterator for BoxValue<T> {
 
 #[derive(Debug, Clone, Copy, Hash)]
 pub struct BoxValueRef<'a> {
-    pub colors: &'a [Color],
-    pub multiplicities: &'a [Natural],
-    pub lengths: &'a [u32],
-}
-
-pub struct BoxValueRefIter<'a> {
-    colors: &'a [Color],
-    multiplicities: &'a [Natural],
-    lengths: &'a [u32],
+    pub(crate) colors: &'a [Color],
+    pub(crate) multiplicities: &'a [Natural],
+    pub(crate) lengths: &'a [u32],
 }
 
 impl<'a, T: BoxType> IntoIterator for &'a BoxValue<T> {
     type Item = BoxValueRef<'a>;
-    type IntoIter = BoxValueRefIter<'a>;
+    type IntoIter = BoxValueRef<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        BoxValueRefIter {
+        BoxValueRef {
             colors: &self.colors[1..],
             multiplicities: &self.multiplicities[1..],
             lengths: &self.lengths[1..],
@@ -677,7 +784,7 @@ impl<'a, T: BoxType> IntoIterator for &'a BoxValue<T> {
     }
 }
 
-impl<'a> Iterator for BoxValueRefIter<'a> {
+impl<'a> Iterator for BoxValueRef<'a> {
     type Item = BoxValueRef<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
