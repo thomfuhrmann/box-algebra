@@ -3,7 +3,54 @@ use std::ops::Add;
 use malachite::{Natural, base::num::arithmetic::traits::SaturatingSub};
 use rapidhash::RapidHashMap;
 
-use crate::{AnyBox, BoxAdd, BoxType, BoxValue, Color};
+use crate::{
+    AnyBox, BoxKind, BoxType, BoxValue, BoxVariant, Color, MultinumBox, NumBox, PolynumBox,
+};
+
+/// Trait for the output type of box addition
+pub trait BoxAdd<Rhs = Self> {
+    type Output: BoxType;
+}
+
+impl<T: BoxType> BoxAdd for T {
+    type Output = Self;
+}
+
+macro_rules! impl_box_add {
+    ($lhs:ty, $rhs:ty => $out:ty) => {
+        impl BoxAdd<$rhs> for $lhs {
+            type Output = $out;
+        }
+        impl BoxAdd<$lhs> for $rhs {
+            type Output = $out;
+        }
+    };
+}
+
+impl_box_add!(NumBox, PolynumBox => PolynumBox);
+impl_box_add!(NumBox, MultinumBox => MultinumBox);
+impl_box_add!(PolynumBox, MultinumBox => MultinumBox);
+
+impl Add for BoxKind {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (BoxKind::Empty, r) => r,
+            (l, BoxKind::Empty) => l,
+            (BoxKind::Num, BoxKind::Num) => BoxKind::Num,
+            (BoxKind::Num, BoxKind::Polynum) => BoxKind::Polynum,
+            (BoxKind::Polynum, BoxKind::Num) => BoxKind::Polynum,
+            (BoxKind::Polynum, BoxKind::Polynum) => BoxKind::Polynum,
+            (BoxKind::Polynum, BoxKind::Multinum) => BoxKind::Multinum,
+            (BoxKind::Multinum, BoxKind::Polynum) => BoxKind::Multinum,
+            (BoxKind::Multinum, BoxKind::Multinum) => BoxKind::Multinum,
+            (BoxKind::Vexel, BoxKind::Vexel) => BoxKind::Vexel,
+            (BoxKind::Maxel, BoxKind::Maxel) => BoxKind::Maxel,
+            (_, _) => BoxKind::Any,
+        }
+    }
+}
 
 impl<T: BoxType> BoxValue<T> {
     fn add_child_boxes(self, unique_children: &mut RapidHashMap<u64, BoxValue<AnyBox>>) {
@@ -12,11 +59,13 @@ impl<T: BoxType> BoxValue<T> {
             let child_mul = child.get_multiplicity(0);
 
             let hash = child.hash_content(unique_children.hasher());
+
             if let Some(other) = unique_children.get_mut(&hash)
                 && child.is_eq_content(other)
             {
                 let other_col = other.get_color(0);
                 let other_mul = other.get_multiplicity(0);
+
                 if child_col + other_col == Color::Red {
                     if child_mul < other_mul {
                         other.set_multiplicity(0, other_mul.saturating_sub(child_mul));
@@ -41,7 +90,11 @@ impl<L: BoxType + BoxAdd<R>, R: BoxType> Add<BoxValue<R>> for BoxValue<L> {
         let lhs_col = self.get_color(0);
         let rhs_col = rhs.get_color(0);
 
+        let lhs_kind = self.get_kind(0);
+        let rhs_kind = rhs.get_kind(0);
+
         let mut result = BoxValue::<L::Output>::new();
+        result.kinds.push(BoxKind::Any);
         result.colors.push(lhs_col + rhs_col);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1);
@@ -58,6 +111,14 @@ impl<L: BoxType + BoxAdd<R>, R: BoxType> Add<BoxValue<R>> for BoxValue<L> {
 
             result.extend(child);
         }
+
+        // set kind of box based on final result
+        let new_kind = if result.lengths[0] == 1 {
+            BoxKind::Empty
+        } else {
+            lhs_kind + rhs_kind
+        };
+        result.kinds[0] = new_kind;
 
         result.sort_immediate_children();
         result
@@ -86,23 +147,82 @@ impl<L: BoxType + BoxAdd<R>, R: BoxType> Add<BoxValue<R>> for &BoxValue<L> {
     }
 }
 
+impl Add for BoxVariant {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (BoxVariant::Empty(l), mut r) => {
+                let l_col = l.get_color(0);
+                let r_col = r.get_color(0);
+                match l_col + r_col {
+                    Color::Black => {
+                        r.set_color(0, Color::Black);
+                    }
+                    Color::Red => {
+                        r.set_color(0, Color::Red);
+                    }
+                }
+                r
+            }
+            (mut l, BoxVariant::Empty(r)) => {
+                let l_col = l.get_color(0);
+                let r_col = r.get_color(0);
+                match l_col + r_col {
+                    Color::Black => {
+                        l.set_color(0, Color::Black);
+                    }
+                    Color::Red => {
+                        l.set_color(0, Color::Red);
+                    }
+                }
+                l
+            }
+            (BoxVariant::Num(l), BoxVariant::Num(r)) => BoxVariant::repack_raw(l + r),
+            (BoxVariant::Num(l), BoxVariant::Polynum(r)) => BoxVariant::repack_raw(l + r),
+            (BoxVariant::Polynum(l), BoxVariant::Num(r)) => BoxVariant::repack_raw(l + r),
+            (BoxVariant::Polynum(l), BoxVariant::Polynum(r)) => BoxVariant::repack_raw(l + r),
+            (BoxVariant::Num(l), BoxVariant::Multinum(r)) => BoxVariant::repack_raw(l + r),
+            (BoxVariant::Multinum(l), BoxVariant::Num(r)) => BoxVariant::repack_raw(l + r),
+            (BoxVariant::Polynum(l), BoxVariant::Multinum(r)) => BoxVariant::repack_raw(l + r),
+            (BoxVariant::Multinum(l), BoxVariant::Polynum(r)) => BoxVariant::repack_raw(l + r),
+            (BoxVariant::Multinum(l), BoxVariant::Multinum(r)) => BoxVariant::repack_raw(l + r),
+            (BoxVariant::Vexel(l), BoxVariant::Vexel(r)) => BoxVariant::repack_raw(l + r),
+            (BoxVariant::Maxel(l), BoxVariant::Maxel(r)) => BoxVariant::repack_raw(l + r),
+            (l, r) => panic!("Type Error: Cannot add {:?} to {:?}", l, r),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
-    use crate::BoxValue;
+    use crate::BoxVariant;
 
     #[test]
     fn test_add() {
-        let left = BoxValue::from(3);
-        let right = BoxValue::from(5);
+        let left = BoxVariant::from(3);
+        let right = BoxVariant::from(5);
         let sum = left + right;
-        let exp = BoxValue::from(8);
+        let exp = BoxVariant::from(8);
         assert_eq!(sum, exp);
 
-        let left = BoxValue::from(-3);
-        let right = BoxValue::from(5);
+        let left = BoxVariant::from(-3);
+        let right = BoxVariant::from(5);
         let sum = left + right;
-        let exp = BoxValue::from(2);
+        let exp = BoxVariant::from(2);
+        assert_eq!(sum, exp);
+
+        let left = BoxVariant::from(-3);
+        let right = BoxVariant::from(3);
+        let sum = left + right;
+        let exp = BoxVariant::from(0);
+        assert_eq!(sum, exp);
+
+        let left = BoxVariant::anti_zero();
+        let right = BoxVariant::from(3);
+        let sum = left + right;
+        let exp = BoxVariant::from(3).into_anti();
         assert_eq!(sum, exp);
     }
 }

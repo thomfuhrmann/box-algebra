@@ -3,7 +3,31 @@ use std::ops::Mul;
 use malachite::{Natural, base::num::arithmetic::traits::SaturatingSub};
 use rapidhash::RapidHashMap;
 
-use crate::{AnyBox, BoxMul, BoxType, BoxValue, Color};
+use crate::{AnyBox, BoxType, BoxValue, BoxVariant, Color, MultinumBox, NumBox, PolynumBox};
+
+/// Trait for the output type of box multiplication
+pub trait BoxMul<Rhs = Self> {
+    type Output: BoxType;
+}
+
+impl<T: BoxType> BoxMul for T {
+    type Output = Self;
+}
+
+macro_rules! impl_box_mul {
+    ($lhs:ty, $rhs:ty => $out:ty) => {
+        impl BoxMul<$rhs> for $lhs {
+            type Output = $out;
+        }
+        impl BoxMul<$lhs> for $rhs {
+            type Output = $out;
+        }
+    };
+}
+
+impl_box_mul!(NumBox, PolynumBox => PolynumBox);
+impl_box_mul!(NumBox, MultinumBox => MultinumBox);
+impl_box_mul!(PolynumBox, MultinumBox => MultinumBox);
 
 impl<L: BoxType + BoxMul<R>, R: BoxType> Mul<BoxValue<R>> for BoxValue<L> {
     type Output = BoxValue<L::Output>;
@@ -15,6 +39,9 @@ impl<L: BoxType + BoxMul<R>, R: BoxType> Mul<BoxValue<R>> for BoxValue<L> {
 
         let lhs_col = self.get_color(0);
         let rhs_col = rhs.get_color(0);
+
+        let lhs_kind = self.get_kind(0);
+        let rhs_kind = rhs.get_kind(0);
 
         for left_child in self {
             for right_child in rhs.clone() {
@@ -49,6 +76,7 @@ impl<L: BoxType + BoxMul<R>, R: BoxType> Mul<BoxValue<R>> for BoxValue<L> {
             }
         }
 
+        result.kinds.push(lhs_kind + rhs_kind);
         result.colors.push(lhs_col + rhs_col);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1);
@@ -89,117 +117,112 @@ impl<L: BoxType + BoxMul<R>, R: BoxType> Mul<BoxValue<R>> for &BoxValue<L> {
     }
 }
 
-impl<T: BoxType> Mul<u32> for BoxValue<T> {
+impl Mul for BoxVariant {
     type Output = Self;
 
+    fn mul(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (BoxVariant::Empty(l), r) => {
+                let l_col = l.get_color(0);
+                let r_col = r.get_color(0);
+                match l_col * r_col {
+                    Color::Black => BoxValue::zero().into(),
+                    Color::Red => BoxValue::anti_zero().into(),
+                }
+            }
+            (l, BoxVariant::Empty(r)) => {
+                let l_col = l.get_color(0);
+                let r_col = r.get_color(0);
+                match l_col * r_col {
+                    Color::Black => BoxValue::zero().into(),
+                    Color::Red => BoxValue::anti_zero().into(),
+                }
+            }
+            (BoxVariant::Num(l), BoxVariant::Num(r)) => BoxVariant::repack_raw(l * r),
+            (BoxVariant::Num(l), BoxVariant::Polynum(r)) => BoxVariant::repack_raw(l * r),
+            (BoxVariant::Polynum(l), BoxVariant::Num(r)) => BoxVariant::repack_raw(l * r),
+            (BoxVariant::Polynum(l), BoxVariant::Polynum(r)) => BoxVariant::repack_raw(l * r),
+            (BoxVariant::Num(l), BoxVariant::Multinum(r)) => BoxVariant::repack_raw(l * r),
+            (BoxVariant::Multinum(l), BoxVariant::Num(r)) => BoxVariant::repack_raw(l * r),
+            (BoxVariant::Polynum(l), BoxVariant::Multinum(r)) => BoxVariant::repack_raw(l * r),
+            (BoxVariant::Multinum(l), BoxVariant::Polynum(r)) => BoxVariant::repack_raw(l * r),
+            (BoxVariant::Multinum(l), BoxVariant::Multinum(r)) => BoxVariant::repack_raw(l * r),
+            (BoxVariant::Vexel(l), BoxVariant::Vexel(r)) => BoxVariant::repack_raw(l * r),
+            (BoxVariant::Maxel(l), BoxVariant::Maxel(r)) => BoxVariant::repack_raw(l * r),
+            (l, r) => panic!("Type Error: Cannot multiply {:?} with {:?}", l, r),
+        }
+    }
+}
+
+impl Mul<BoxVariant> for u32 {
+    type Output = BoxVariant;
+
+    #[inline]
+    fn mul(self, rhs: BoxVariant) -> Self::Output {
+        BoxVariant::from(self) * rhs
+    }
+}
+
+impl Mul<u32> for BoxVariant {
+    type Output = BoxVariant;
+
+    #[inline]
     fn mul(self, rhs: u32) -> Self::Output {
-        let mut result = BoxValue::<T>::new();
-        result.colors.push(self.get_color(0));
-        result.multiplicities.push(self.get_multiplicity(0));
-        result.lengths.push(self.get_length(0));
-
-        let rhs_nat = Natural::from(rhs);
-        for mut child in self {
-            let mul = child.get_multiplicity(0) * rhs_nat.clone();
-            child.set_multiplicity(0, mul);
-            result.extend(child);
-        }
-        result
+        self * BoxVariant::from(rhs)
     }
 }
 
-impl<T: BoxType> Mul<BoxValue<T>> for u32 {
-    type Output = BoxValue<T>;
+impl Mul<BoxVariant> for u64 {
+    type Output = BoxVariant;
 
     #[inline]
-    fn mul(self, rhs: BoxValue<T>) -> Self::Output {
-        rhs * self
+    fn mul(self, rhs: BoxVariant) -> Self::Output {
+        BoxVariant::from(self) * rhs
     }
 }
 
-impl<T: BoxType> Mul<u64> for BoxValue<T> {
-    type Output = Self;
+impl Mul<u64> for BoxVariant {
+    type Output = BoxVariant;
 
+    #[inline]
     fn mul(self, rhs: u64) -> Self::Output {
-        let mut result = BoxValue::<T>::new();
-        result.colors.push(self.get_color(0));
-        result.multiplicities.push(self.get_multiplicity(0));
-        result.lengths.push(self.get_length(0));
-
-        let rhs_nat = Natural::from(rhs);
-        for mut child in self {
-            let mul = child.get_multiplicity(0) * rhs_nat.clone();
-            child.set_multiplicity(0, mul);
-            result.extend(child);
-        }
-        result
+        self * BoxVariant::from(rhs)
     }
 }
 
-impl<T: BoxType> Mul<BoxValue<T>> for u64 {
-    type Output = BoxValue<T>;
+impl Mul<BoxVariant> for i32 {
+    type Output = BoxVariant;
 
     #[inline]
-    fn mul(self, rhs: BoxValue<T>) -> Self::Output {
-        rhs * self
+    fn mul(self, rhs: BoxVariant) -> Self::Output {
+        BoxVariant::from(self) * rhs
     }
 }
 
-impl<T: BoxType> Mul<i32> for BoxValue<T> {
-    type Output = Self;
+impl Mul<i32> for BoxVariant {
+    type Output = BoxVariant;
 
+    #[inline]
     fn mul(self, rhs: i32) -> Self::Output {
-        let mut result = BoxValue::<T>::new();
-        result.colors.push(self.get_color(0));
-        result.multiplicities.push(self.get_multiplicity(0));
-        result.lengths.push(self.get_length(0));
-
-        let rhs_nat = Natural::from(rhs.unsigned_abs());
-        for mut child in self {
-            let mul = child.get_multiplicity(0) * rhs_nat.clone();
-            child.set_multiplicity(0, mul);
-            child.set_color(0, Color::Red);
-            result.extend(child);
-        }
-        result
+        self * BoxVariant::from(rhs)
     }
 }
 
-impl<T: BoxType> Mul<BoxValue<T>> for i32 {
-    type Output = BoxValue<T>;
+impl Mul<BoxVariant> for i64 {
+    type Output = BoxVariant;
 
     #[inline]
-    fn mul(self, rhs: BoxValue<T>) -> Self::Output {
-        rhs * self
+    fn mul(self, rhs: BoxVariant) -> Self::Output {
+        BoxVariant::from(self) * rhs
     }
 }
 
-impl<T: BoxType> Mul<i64> for BoxValue<T> {
-    type Output = Self;
+impl Mul<i64> for BoxVariant {
+    type Output = BoxVariant;
 
+    #[inline]
     fn mul(self, rhs: i64) -> Self::Output {
-        let mut result = BoxValue::<T>::new();
-        result.colors.push(self.get_color(0));
-        result.multiplicities.push(self.get_multiplicity(0));
-        result.lengths.push(self.get_length(0));
-
-        let rhs_nat = Natural::from(rhs.unsigned_abs());
-        for mut child in self {
-            let mul = child.get_multiplicity(0) * rhs_nat.clone();
-            child.set_multiplicity(0, mul);
-            child.set_color(0, Color::Red);
-            result.extend(child);
-        }
-        result
-    }
-}
-
-impl<T: BoxType> Mul<BoxValue<T>> for i64 {
-    type Output = BoxValue<T>;
-
-    #[inline]
-    fn mul(self, rhs: BoxValue<T>) -> Self::Output {
-        rhs * self
+        self * BoxVariant::from(rhs)
     }
 }
 
@@ -210,26 +233,30 @@ mod tests {
 
     #[test]
     fn test_mul() {
-        let prod = BoxValue::from(2) * BoxValue::from(3);
-        let expected = BoxValue::from(6);
+        let prod = BoxVariant::from(2) * BoxVariant::from(3);
+        let expected = BoxVariant::from(6);
         assert_eq!(prod, expected);
 
-        let expected = BoxValue::from(3) * BoxValue::from(2);
+        let expected = BoxVariant::from(3) * BoxVariant::from(2);
         assert_eq!(prod, expected);
 
-        let prod = BoxValue::from(2) * BoxValue::from(-3);
-        let expected = BoxValue::from(-6);
+        let prod = BoxVariant::from(2) * BoxVariant::from(-3);
+        let expected = BoxVariant::from(-6);
         assert_eq!(prod, expected);
 
-        let prod = BoxValue::alpha() * BoxValue::alpha();
-        let expected = BoxValue::from(2).wrap(1_u32);
+        let prod = 2 * BoxVariant::from(-3);
+        let expected = BoxVariant::from(-6);
         assert_eq!(prod, expected);
 
-        let s1 = BoxValue::one() + BoxValue::alpha();
-        let minus_alpha = (-1) * BoxValue::alpha();
-        let s2 = BoxValue::one() + minus_alpha;
+        let prod = BoxVariant::alpha() * BoxVariant::alpha();
+        let expected = BoxVariant::from(2).wrap::<PolynumBox>(1_u32);
+        assert_eq!(prod, expected);
+
+        let s1 = BoxVariant::one() + BoxVariant::alpha();
+        let minus_alpha = (-1) * BoxVariant::alpha();
+        let s2 = BoxVariant::one() + minus_alpha;
         let prod = s1 * s2;
-        let expected = BoxValue::from(1) + (-1) * BoxValue::alpha() * BoxValue::alpha();
+        let expected = BoxVariant::from(1) + (-1) * BoxVariant::alpha() * BoxVariant::alpha();
         assert_eq!(prod, expected);
     }
 }

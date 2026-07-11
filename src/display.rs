@@ -3,7 +3,7 @@ use std::fmt::Display;
 use colored::Colorize;
 use malachite::Natural;
 
-use crate::{BoxKind, BoxType, BoxValue, PixelBox};
+use crate::{BoxKind, BoxType, BoxValue};
 
 /// Helper function to display multiplicities as subscripts
 fn to_subscript(num: Natural) -> String {
