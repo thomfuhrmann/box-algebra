@@ -1,4 +1,4 @@
-use std::ops::Add;
+use std::ops::{Add, Sub};
 
 use malachite::{Natural, base::num::arithmetic::traits::SaturatingSub};
 use rapidhash::RapidHashMap;
@@ -48,6 +48,18 @@ impl Add for BoxKind {
             (BoxKind::Vexel, BoxKind::Vexel) => BoxKind::Vexel,
             (BoxKind::Maxel, BoxKind::Maxel) => BoxKind::Maxel,
             (_, _) => BoxKind::Any,
+        }
+    }
+}
+
+impl BoxKind {
+    pub fn get_kind_from_depth(depth: u32) -> BoxKind {
+        match depth {
+            0 => BoxKind::Empty,
+            1 => BoxKind::Num,
+            2 => BoxKind::Polynum,
+            3 => BoxKind::Multinum,
+            _ => BoxKind::Any,
         }
     }
 }
@@ -103,21 +115,27 @@ impl<L: BoxType + BoxAdd<R>, R: BoxType> Add<BoxValue<R>> for BoxValue<L> {
         self.add_child_boxes(&mut unique_children);
         rhs.add_child_boxes(&mut unique_children);
 
+        let mut max_depth: u32 = 0;
         for child in unique_children.into_values() {
             let mult = child.get_multiplicity(0);
             if mult == 0 {
                 continue;
             }
 
+            let child_len = child.get_length(0);
+            max_depth = max_depth.max(child_len);
             result.extend(child);
         }
 
+        let kind = L::Output::KIND;
+        let new_kind =
+            if kind == BoxKind::Num || kind == BoxKind::Polynum || kind == BoxKind::Multinum {
+                BoxKind::get_kind_from_depth(max_depth)
+            } else {
+                lhs_kind + rhs_kind
+            };
+
         // set kind of box based on final result
-        let new_kind = if result.lengths[0] == 1 {
-            BoxKind::Empty
-        } else {
-            lhs_kind + rhs_kind
-        };
         result.kinds[0] = new_kind;
 
         result.sort_immediate_children();
@@ -194,6 +212,14 @@ impl Add for BoxVariant {
     }
 }
 
+impl Sub for BoxVariant {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self + (-1) * rhs
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -223,6 +249,15 @@ mod tests {
         let right = BoxVariant::from(3);
         let sum = left + right;
         let exp = BoxVariant::from(3).into_anti();
+        assert_eq!(sum, exp);
+
+        let sum = (BoxVariant::from(1) + BoxVariant::alpha())
+            - (BoxVariant::from(1) + BoxVariant::alpha());
+        let exp = BoxVariant::zero();
+        assert_eq!(sum, exp);
+
+        let sum = (BoxVariant::from(1) + BoxVariant::alpha()) - BoxVariant::alpha();
+        let exp = BoxVariant::from(1);
         assert_eq!(sum, exp);
     }
 }

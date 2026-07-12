@@ -13,9 +13,9 @@ use rapidhash::fast::RandomState;
 
 pub mod add;
 // pub mod derivative;
-// pub mod display;
+pub mod display;
 // pub mod function;
-// pub mod maxel;
+pub mod maxel;
 pub mod mul;
 // pub mod parser;
 // pub mod set;
@@ -87,6 +87,11 @@ macro_rules! dispatch {
 
 impl BoxVariant {
     #[inline]
+    pub fn get_kind(&self, idx: usize) -> BoxKind {
+        dispatch!(self => kinds[idx])
+    }
+
+    #[inline]
     pub fn get_color(&self, idx: usize) -> Color {
         dispatch!(self => colors[idx])
     }
@@ -99,6 +104,11 @@ impl BoxVariant {
     #[inline]
     pub fn get_length(&self, idx: usize) -> u32 {
         dispatch!(self => lengths[idx])
+    }
+
+    #[inline]
+    pub fn set_kind(&mut self, idx: usize, kind: BoxKind) {
+        dispatch!(self => kinds[idx] = kind);
     }
 
     #[inline]
@@ -163,7 +173,7 @@ impl BoxVariant {
         self
     }
 
-    /// Repack the box based on its outer runtime kind/type
+    /// Repack the box based on its runtime type
     pub fn repack_raw<T: BoxType>(raw: BoxValue<T>) -> Self {
         match raw.kinds[0] {
             BoxKind::Any => BoxVariant::Any(raw.cast::<AnyBox>()),
@@ -199,23 +209,6 @@ impl BoxVariant {
         }
     }
 }
-
-// impl Display for BoxVariant {
-//     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-//         match self {
-//             BoxVariant::Any(inner) => write!(f, "{}", inner),
-//             BoxVariant::Empty(inner) => write!(f, "{}", inner),
-//             BoxVariant::Num(inner) => write!(f, "{}", inner),
-//             BoxVariant::Polynum(inner) => write!(f, "{}", inner),
-//             BoxVariant::Multinum(inner) => write!(f, "{}", inner),
-//             BoxVariant::Unixel(inner) => write!(f, "{}", inner),
-//             BoxVariant::Vexel(inner) => write!(f, "{}", inner),
-//             BoxVariant::Pixel(inner) => write!(f, "{:#}", inner),
-//             BoxVariant::Maxel(inner) => write!(f, "{:#}", inner),
-//             BoxVariant::Set(inner) => write!(f, "{}", inner),
-//         }
-//     }
-// }
 
 /// Static conversion into [`BoxVariant`]
 pub trait IntoVariant: BoxType {
@@ -657,6 +650,58 @@ impl<T: BoxType> BoxValue<T> {
             self.set_color(0, Color::Black);
         }
         self
+    }
+}
+
+impl From<u32> for BoxValue<NumBox> {
+    fn from(value: u32) -> Self {
+        let zero = BoxValue::zero();
+        if value == 0 {
+            return zero.cast();
+        }
+        zero.wrap::<NumBox>(value)
+    }
+}
+
+impl From<u64> for BoxValue<NumBox> {
+    fn from(value: u64) -> Self {
+        let zero = BoxValue::zero();
+        if value == 0 {
+            return zero.cast();
+        }
+        zero.wrap::<NumBox>(value)
+    }
+}
+
+impl From<i32> for BoxValue<NumBox> {
+    fn from(value: i32) -> Self {
+        let zero = if value >= 0 {
+            BoxValue::zero()
+        } else {
+            BoxValue::anti_zero()
+        };
+
+        if value == 0 {
+            return zero.cast();
+        }
+
+        zero.wrap::<NumBox>(value.unsigned_abs())
+    }
+}
+
+impl From<i64> for BoxValue<NumBox> {
+    fn from(value: i64) -> Self {
+        let zero = if value >= 0 {
+            BoxValue::zero()
+        } else {
+            BoxValue::anti_zero()
+        };
+
+        if value == 0 {
+            return zero.cast();
+        }
+
+        zero.wrap::<NumBox>(value.unsigned_abs())
     }
 }
 

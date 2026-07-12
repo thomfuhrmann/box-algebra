@@ -147,8 +147,12 @@ impl Mul for BoxVariant {
             (BoxVariant::Polynum(l), BoxVariant::Multinum(r)) => BoxVariant::repack_raw(l * r),
             (BoxVariant::Multinum(l), BoxVariant::Polynum(r)) => BoxVariant::repack_raw(l * r),
             (BoxVariant::Multinum(l), BoxVariant::Multinum(r)) => BoxVariant::repack_raw(l * r),
-            (BoxVariant::Vexel(l), BoxVariant::Vexel(r)) => BoxVariant::repack_raw(l * r),
-            (BoxVariant::Maxel(l), BoxVariant::Maxel(r)) => BoxVariant::repack_raw(l * r),
+            (BoxVariant::Maxel(l), BoxVariant::Vexel(r)) => {
+                BoxVariant::repack_raw(BoxValue::mul_max_vex(l, r))
+            }
+            (BoxVariant::Maxel(l), BoxVariant::Maxel(r)) => {
+                BoxVariant::repack_raw(BoxValue::mul_max(l, r))
+            }
             (l, r) => panic!("Type Error: Cannot multiply {:?} with {:?}", l, r),
         }
     }

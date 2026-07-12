@@ -1,6 +1,6 @@
 //! Maxel is an extension of matrices into the world of boxes
 
-use crate::{AnyBox, BoxType, BoxValue, Color, MaxelBox, PixelBox, UnixelBox, VexelBox};
+use crate::{AnyBox, BoxKind, BoxType, BoxValue, Color, MaxelBox, PixelBox, UnixelBox, VexelBox};
 use malachite::Natural;
 
 impl BoxValue<UnixelBox> {
@@ -9,10 +9,12 @@ impl BoxValue<UnixelBox> {
         let len = value.get_length(0);
 
         let mut result = BoxValue::<UnixelBox>::new();
+        result.kinds.push(BoxKind::Unixel);
         result.colors.push(Color::Black);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1 + len);
 
+        result.kinds.extend(value.kinds);
         result.colors.extend(value.colors);
         result.multiplicities.extend(value.multiplicities);
         result.lengths.extend(value.lengths);
@@ -24,6 +26,7 @@ impl BoxValue<UnixelBox> {
     pub fn x(&self) -> BoxValue<AnyBox> {
         let x_len = self.get_length(1) as usize;
         BoxValue::new_with(
+            self.kinds[1..1 + x_len].to_vec(),
             self.colors[1..1 + x_len].to_vec(),
             self.multiplicities[1..1 + x_len].to_vec(),
             self.lengths[1..1 + x_len].to_vec(),
@@ -35,6 +38,7 @@ impl From<Vec<BoxValue<UnixelBox>>> for BoxValue<VexelBox> {
     /// Create a vexel from unixels
     fn from(value: Vec<BoxValue<UnixelBox>>) -> Self {
         let mut result = BoxValue::new();
+        result.kinds.push(BoxKind::Vexel);
         result.colors.push(Color::Black);
         result.multiplicities.push(malachite::Natural::from(1_u32));
         result.lengths.push(1);
@@ -52,14 +56,17 @@ impl BoxValue<PixelBox> {
         let y_len = y.get_length(0);
 
         let mut result = BoxValue::<PixelBox>::new();
+        result.kinds.push(BoxKind::Pixel);
         result.colors.push(Color::Black);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1 + x_len + y_len);
 
+        result.kinds.extend(x.kinds);
         result.colors.extend(x.colors);
         result.multiplicities.extend(x.multiplicities);
         result.lengths.extend(x.lengths);
 
+        result.kinds.extend(y.kinds);
         result.colors.extend(y.colors);
         result.multiplicities.extend(y.multiplicities);
         result.lengths.extend(y.lengths);
@@ -71,6 +78,7 @@ impl BoxValue<PixelBox> {
     pub fn x(&self) -> BoxValue<AnyBox> {
         let x_len = self.get_length(1) as usize;
         BoxValue::new_with(
+            self.kinds[1..1 + x_len].to_vec(),
             self.colors[1..1 + x_len].to_vec(),
             self.multiplicities[1..1 + x_len].to_vec(),
             self.lengths[1..1 + x_len].to_vec(),
@@ -83,6 +91,7 @@ impl BoxValue<PixelBox> {
         let y_idx = 1 + x_len;
         let y_len = self.get_length(y_idx) as usize;
         BoxValue::new_with(
+            self.kinds[y_idx..y_idx + y_len].to_vec(),
             self.colors[y_idx..y_idx + y_len].to_vec(),
             self.multiplicities[y_idx..y_idx + y_len].to_vec(),
             self.lengths[y_idx..y_idx + y_len].to_vec(),
@@ -119,6 +128,7 @@ impl BoxValue<PixelBox> {
 impl From<Vec<BoxValue<PixelBox>>> for BoxValue<MaxelBox> {
     fn from(value: Vec<BoxValue<PixelBox>>) -> Self {
         let mut result = BoxValue::<MaxelBox>::new();
+        result.kinds.push(BoxKind::Maxel);
         result.colors.push(Color::Black);
         result.multiplicities.push(malachite::Natural::from(1_u32));
         result.lengths.push(1);
@@ -133,6 +143,7 @@ impl BoxValue<MaxelBox> {
     /// Multiply two maxels
     pub fn mul_max(left: Self, right: Self) -> Self {
         let mut result = BoxValue::<MaxelBox>::new();
+        result.kinds.push(BoxKind::Maxel);
         result.colors.push(Color::Black);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1);
@@ -153,6 +164,7 @@ impl BoxValue<MaxelBox> {
     /// Multiply a maxel with a vexel
     pub fn mul_max_vex(self, vex: BoxValue<VexelBox>) -> BoxValue<VexelBox> {
         let mut result = BoxValue::<VexelBox>::new();
+        result.kinds.push(BoxKind::Vexel);
         result.colors.push(Color::Black);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1);
@@ -179,37 +191,105 @@ macro_rules! pixel {
 
 #[macro_export]
 macro_rules! vexel {
-     ([$($x:expr),* $(,)?]) => {
-         {
-             let mut result = $crate::BoxValue::<$crate::VexelBox>::new();
-             result.colors.push($crate::Color::Black);
-             result.multiplicities.push(malachite::Natural::from(1_u32));
-             result.lengths.push(1);
-             $(
-                 let unix = $crate::BoxValue::<$crate::maxel::UnixelBox>::unixel(($x).into());
-                 result.extend(unix);
-             )*
-             result
-         }
-     };
- }
+    ([$($x:expr),* $(,)?]) => {
+       {
+            use malachite::base::num::arithmetic::traits::SaturatingSub;
+            let mut result = $crate::BoxValue::<$crate::VexelBox>::new();
+            result.kinds.push($crate::BoxKind::Vexel);
+            result.colors.push($crate::Color::Black);
+            result.multiplicities.push(malachite::Natural::from(1_u32));
+            result.lengths.push(1);
+
+            let mut unique_children: rapidhash::RapidHashMap<u64, $crate::BoxValue<$crate::UnixelBox>> = rapidhash::RapidHashMap::default();
+            $(
+                let unix = $crate::BoxValue::<$crate::UnixelBox>::unixel(($x).into());
+                let col = unix.get_color(0);
+                let mul = unix.get_multiplicity(0);
+                let struct_hash = unix.hash_content(unique_children.hasher());
+                if let Some(other) = unique_children.get_mut(&struct_hash)
+                    && unix.is_eq_content(other)
+                {
+                    let other_col = other.get_color(0);
+                    let other_mul = other.get_multiplicity(0);
+                    if col + other_col == $crate::Color::Red {
+                        if mul < other_mul {
+                            other.set_multiplicity(0, other_mul.saturating_sub(mul));
+                        } else {
+                            other.set_multiplicity(0, mul.saturating_sub(other_mul));
+                            other.set_color(0, col);
+                        }
+                    } else {
+                        other.set_multiplicity(0, other_mul + mul);
+                    }
+                } else {
+                    unique_children.insert(struct_hash, unix);
+                }
+            )*
+
+            for unixel in unique_children.into_values() {
+                let mul = unixel.get_multiplicity(0);
+                if mul == 0 {
+                    continue;
+                }
+
+                result.extend(unixel);
+            }
+            result.sort_immediate_children();
+            result
+       }
+    };
+}
 
 #[macro_export]
 macro_rules! maxel {
-     ([$([$x:expr, $y:expr]),* $(,)?]) => {
-         {
-             let mut result = $crate::BoxValue::<$crate::MaxelBox>::new();
-             result.colors.push($crate::Color::Black);
-             result.multiplicities.push(malachite::Natural::from(1_u32));
-             result.lengths.push(1);
-             $(
-                 let pix = $crate::BoxValue::<$crate::PixelBox>::pixel(($x).into(), ($y).into());
-                 result.extend(pix);
-             )*
-             result
-         }
-     };
- }
+    ([$([$x:expr, $y:expr]),* $(,)?]) => {
+        {
+            use malachite::base::num::arithmetic::traits::SaturatingSub;
+            let mut result = $crate::BoxValue::<$crate::MaxelBox>::new();
+            result.kinds.push($crate::BoxKind::Maxel);
+            result.colors.push($crate::Color::Black);
+            result.multiplicities.push(malachite::Natural::from(1_u32));
+            result.lengths.push(1);
+
+            let mut unique_children: rapidhash::RapidHashMap<u64, $crate::BoxValue<$crate::PixelBox>> = rapidhash::RapidHashMap::default();
+            $(
+                let pix = $crate::BoxValue::<$crate::PixelBox>::pixel(($x).into(), ($y).into());
+                let col = pix.get_color(0);
+                let mul = pix.get_multiplicity(0);
+                let struct_hash = pix.hash_content(unique_children.hasher());
+                if let Some(other) = unique_children.get_mut(&struct_hash)
+                    && pix.is_eq_content(other)
+                {
+                    let other_col = other.get_color(0);
+                    let other_mul = other.get_multiplicity(0);
+                    if col + other_col == $crate::Color::Red {
+                        if mul < other_mul {
+                            other.set_multiplicity(0, other_mul.saturating_sub(mul));
+                        } else {
+                            other.set_multiplicity(0, mul.saturating_sub(other_mul));
+                            other.set_color(0, col);
+                        }
+                    } else {
+                        other.set_multiplicity(0, other_mul + mul);
+                    }
+                } else {
+                    unique_children.insert(struct_hash, pix);
+                }
+            )*
+
+            for unixel in unique_children.into_values() {
+                let mul = unixel.get_multiplicity(0);
+                if mul == 0 {
+                    continue;
+                }
+
+                result.extend(unixel);
+            }
+            result.sort_immediate_children();
+            result
+        }
+    };
+}
 
 #[cfg(test)]
 mod tests {
