@@ -18,3 +18,4 @@ logos = "0.16.1"
 malachite = "0.9.1"
 rapidhash = "4.4.1"
 strum = { version = "0.28.0", features = ["derive"] }
+wasm-bindgen = "0.2.126"

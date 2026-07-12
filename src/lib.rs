@@ -1,4 +1,4 @@
-use malachite::{Integer, Natural, base::num::arithmetic::traits::UnsignedAbs};
+use malachite::Natural;
 use strum::EnumDiscriminants;
 
 use std::{
@@ -12,13 +12,14 @@ use std::{
 use rapidhash::fast::RandomState;
 
 pub mod add;
-// pub mod derivative;
+pub mod derivative;
 pub mod display;
-// pub mod function;
+pub mod from;
+pub mod function;
 pub mod maxel;
 pub mod mul;
 pub mod parser;
-// pub mod set;
+pub mod set;
 pub mod store;
 
 /// Kind of boxes that can exist in a store
@@ -38,6 +39,7 @@ pub enum BoxVariant {
     Set(BoxValue<SetBox>),
 }
 
+#[macro_export]
 macro_rules! dispatch {
     (&$self:ident => $($field:tt)*) => {
         match $self {
@@ -134,6 +136,11 @@ impl BoxVariant {
     #[inline]
     pub fn into_any(self) -> BoxVariant {
         dispatch!(self => cast::<AnyBox>()).into()
+    }
+
+    #[inline]
+    pub fn is_anti(&self) -> bool {
+        dispatch!(self => is_anti())
     }
 
     pub fn zero() -> Self {
@@ -621,6 +628,7 @@ impl<T: BoxType> BoxValue<T> {
 
     /// Remove the k-th row (without adjusting the lengths)
     pub fn remove(&mut self, index: usize) {
+        self.kinds.remove(index);
         self.colors.remove(index);
         self.multiplicities.remove(index);
         self.lengths.remove(index);
@@ -653,143 +661,27 @@ impl<T: BoxType> BoxValue<T> {
     }
 }
 
-impl From<u32> for BoxValue<NumBox> {
-    fn from(value: u32) -> Self {
-        let zero = BoxValue::zero();
-        if value == 0 {
-            return zero.cast();
+impl BoxValue<AnyBox> {
+    /// Construct an empty box
+    pub fn empty() -> Self {
+        BoxValue {
+            kinds: vec![BoxKind::Any],
+            colors: vec![Color::Black],
+            multiplicities: vec![Natural::from(1_u32)],
+            lengths: vec![1],
+            _marker: std::marker::PhantomData,
         }
-        zero.wrap::<NumBox>(value)
     }
-}
 
-impl From<u64> for BoxValue<NumBox> {
-    fn from(value: u64) -> Self {
-        let zero = BoxValue::zero();
-        if value == 0 {
-            return zero.cast();
+    /// Construct an empty red box
+    pub fn anti_empty() -> Self {
+        BoxValue {
+            kinds: vec![BoxKind::Any],
+            colors: vec![Color::Red],
+            multiplicities: vec![Natural::from(1_u32)],
+            lengths: vec![1],
+            _marker: std::marker::PhantomData,
         }
-        zero.wrap::<NumBox>(value)
-    }
-}
-
-impl From<i32> for BoxValue<NumBox> {
-    fn from(value: i32) -> Self {
-        let zero = if value >= 0 {
-            BoxValue::zero()
-        } else {
-            BoxValue::anti_zero()
-        };
-
-        if value == 0 {
-            return zero.cast();
-        }
-
-        zero.wrap::<NumBox>(value.unsigned_abs())
-    }
-}
-
-impl From<i64> for BoxValue<NumBox> {
-    fn from(value: i64) -> Self {
-        let zero = if value >= 0 {
-            BoxValue::zero()
-        } else {
-            BoxValue::anti_zero()
-        };
-
-        if value == 0 {
-            return zero.cast();
-        }
-
-        zero.wrap::<NumBox>(value.unsigned_abs())
-    }
-}
-
-impl From<u32> for BoxVariant {
-    fn from(value: u32) -> Self {
-        let zero = BoxValue::zero();
-        if value == 0 {
-            return zero.into();
-        }
-        zero.wrap::<NumBox>(value).into()
-    }
-}
-
-impl From<u64> for BoxVariant {
-    fn from(value: u64) -> Self {
-        let zero = BoxValue::zero();
-        if value == 0 {
-            return zero.into();
-        }
-        zero.wrap::<NumBox>(value).into()
-    }
-}
-
-impl From<i32> for BoxVariant {
-    fn from(value: i32) -> Self {
-        let zero = if value >= 0 {
-            BoxValue::zero()
-        } else {
-            BoxValue::anti_zero()
-        };
-
-        if value == 0 {
-            return zero.into();
-        }
-
-        zero.wrap::<NumBox>(value.unsigned_abs()).into()
-    }
-}
-
-impl From<i64> for BoxVariant {
-    fn from(value: i64) -> Self {
-        let zero = if value >= 0 {
-            BoxValue::zero()
-        } else {
-            BoxValue::anti_zero()
-        };
-
-        if value == 0 {
-            return zero.into();
-        }
-
-        zero.wrap::<NumBox>(value.unsigned_abs()).into()
-    }
-}
-
-impl From<Natural> for BoxValue<NumBox> {
-    fn from(value: Natural) -> Self {
-        let zero = BoxValue::zero();
-        if value == 0 {
-            return zero.cast();
-        }
-        zero.wrap::<NumBox>(value)
-    }
-}
-
-impl From<Natural> for BoxVariant {
-    fn from(value: Natural) -> Self {
-        let zero = BoxValue::zero();
-        if value == 0 {
-            return zero.into();
-        }
-        zero.wrap::<NumBox>(value).into()
-    }
-}
-
-impl From<Integer> for BoxVariant {
-    fn from(value: Integer) -> Self {
-        let zero = if value >= 0 {
-            BoxValue::zero()
-        } else {
-            BoxValue::anti_zero()
-        };
-
-        if value == 0 {
-            return zero.into();
-        }
-
-        zero.wrap::<NumBox>(value.unsigned_abs()).into()
     }
 }
 
@@ -816,6 +708,7 @@ impl BoxValue<EmptyBox> {
         }
     }
 }
+
 impl BoxValue<NumBox> {
     /// Construct the box representing the number one
     pub fn one() -> Self {
@@ -860,13 +753,57 @@ impl BoxValue<PolynumBox> {
     pub fn anti_alpha() -> Self {
         BoxValue {
             kinds: vec![BoxKind::Polynum, BoxKind::Num, BoxKind::Empty],
-            colors: vec![Color::Red, Color::Black, Color::Black],
+            colors: vec![Color::Black, Color::Red, Color::Black],
             multiplicities: vec![
                 Natural::from(1_u32),
                 Natural::from(1_u32),
                 Natural::from(1_u32),
             ],
             lengths: vec![3, 2, 1],
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl BoxValue<MultinumBox> {
+    /// Construct the variable beta
+    pub fn beta(n: impl Into<Natural>) -> Self {
+        BoxValue {
+            kinds: vec![
+                BoxKind::Multinum,
+                BoxKind::Polynum,
+                BoxKind::Num,
+                BoxKind::Empty,
+            ],
+            colors: vec![Color::Black, Color::Black, Color::Black, Color::Black],
+            multiplicities: vec![
+                Natural::from(1_u32),
+                Natural::from(1_u32),
+                Natural::from(1_u32),
+                n.into(),
+            ],
+            lengths: vec![4, 3, 2, 1],
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Construct the variable anti-beta
+    pub fn anti_beta(n: impl Into<Natural>) -> Self {
+        BoxValue {
+            kinds: vec![
+                BoxKind::Multinum,
+                BoxKind::Polynum,
+                BoxKind::Num,
+                BoxKind::Empty,
+            ],
+            colors: vec![Color::Black, Color::Red, Color::Black, Color::Black],
+            multiplicities: vec![
+                Natural::from(1_u32),
+                Natural::from(1_u32),
+                Natural::from(1_u32),
+                n.into(),
+            ],
+            lengths: vec![4, 3, 2, 1],
             _marker: std::marker::PhantomData,
         }
     }

@@ -25,10 +25,21 @@ fn to_subscript(num: Natural) -> String {
         .collect()
 }
 
-impl<T: BoxType> Display for BoxValue<T> {
+impl<T: BoxType> std::fmt::Display for BoxValue<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // ⎣...⎦
-        // ⎡...⎤
+        write!(
+            f,
+            "Rows: {} | Kinds: {:?} | Colors: {:?} | Mults: {:?}",
+            self.lengths.first().unwrap_or(&0),
+            self.kinds,
+            self.colors,
+            self.multiplicities
+        )
+    }
+}
+
+impl Display for BoxVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let kind = self.get_kind(0);
         if kind == BoxKind::Empty {
             let zero = if self.is_anti() {
@@ -36,6 +47,7 @@ impl<T: BoxType> Display for BoxValue<T> {
             } else {
                 "0".black()
             };
+
             return write!(f, "{}", zero);
         } else if kind == BoxKind::Num {
             let mult = self.get_multiplicity(1);
@@ -44,19 +56,20 @@ impl<T: BoxType> Display for BoxValue<T> {
             } else {
                 mult.to_string().black()
             };
+
             return write!(f, "{}", num);
         }
 
         let open_bracket = if kind == BoxKind::Unixel || kind == BoxKind::Pixel {
-            "⎡"
+            "⌈"
         } else {
-            "⎣"
+            "⌊"
         };
 
         let close_bracket = if kind == BoxKind::Unixel || kind == BoxKind::Pixel {
-            "⎤"
+            "⌉"
         } else {
-            "⎦"
+            "⌋"
         };
 
         let open = if self.is_anti() {
@@ -100,83 +113,6 @@ impl<T: BoxType> Display for BoxValue<T> {
     }
 }
 
-impl Display for BoxVariant {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BoxVariant::Any(inner) => {
-                if f.alternate() {
-                    write!(f, "{:#}", inner)
-                } else {
-                    write!(f, "{}", inner)
-                }
-            }
-            BoxVariant::Empty(inner) => {
-                if f.alternate() {
-                    write!(f, "{:#}", inner)
-                } else {
-                    write!(f, "{}", inner)
-                }
-            }
-            BoxVariant::Num(inner) => {
-                if f.alternate() {
-                    write!(f, "{:#}", inner)
-                } else {
-                    write!(f, "{}", inner)
-                }
-            }
-            BoxVariant::Polynum(inner) => {
-                if f.alternate() {
-                    write!(f, "{:#}", inner)
-                } else {
-                    write!(f, "{}", inner)
-                }
-            }
-            BoxVariant::Multinum(inner) => {
-                if f.alternate() {
-                    write!(f, "{:#}", inner)
-                } else {
-                    write!(f, "{}", inner)
-                }
-            }
-            BoxVariant::Unixel(inner) => {
-                if f.alternate() {
-                    write!(f, "{:#}", inner)
-                } else {
-                    write!(f, "{}", inner)
-                }
-            }
-            BoxVariant::Vexel(inner) => {
-                if f.alternate() {
-                    write!(f, "{:#}", inner)
-                } else {
-                    write!(f, "{}", inner)
-                }
-            }
-            BoxVariant::Pixel(inner) => {
-                if f.alternate() {
-                    write!(f, "{:#}", inner)
-                } else {
-                    write!(f, "{}", inner)
-                }
-            }
-            BoxVariant::Maxel(inner) => {
-                if f.alternate() {
-                    write!(f, "{:#}", inner)
-                } else {
-                    write!(f, "{}", inner)
-                }
-            }
-            BoxVariant::Set(inner) => {
-                if f.alternate() {
-                    write!(f, "{:#}", inner)
-                } else {
-                    write!(f, "{}", inner)
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct BoxDisplay<T: BoxType>(pub(crate) BoxValue<T>);
 
@@ -195,20 +131,18 @@ impl<'a> From<&'a BoxVariant> for BoxDisplay<AnyBox> {
 
 impl<T: BoxType> Display for BoxDisplay<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // ⎣...⎦
-        // ⎡...⎤
         let kind = self.0.get_kind(0);
 
         let open_bracket = if kind == BoxKind::Unixel || kind == BoxKind::Pixel {
-            "⎡"
+            "⌈"
         } else {
-            "⎣"
+            "⌊"
         };
 
         let close_bracket = if kind == BoxKind::Unixel || kind == BoxKind::Pixel {
-            "⎤"
+            "⌉"
         } else {
-            "⎦"
+            "⌋"
         };
 
         let open = if self.0.is_anti() {
@@ -251,11 +185,10 @@ impl<T: BoxType> Display for BoxDisplay<T> {
                     }
                 }
             } else {
-                // ■ □ ⧠
                 let symbol = if child.is_anti() {
-                    "⧠".red()
+                    "□".red()
                 } else {
-                    "⧠".black()
+                    "□".black()
                 };
 
                 if f.alternate() {
@@ -315,6 +248,7 @@ mod tests {
         println!("{anti_box:#}");
 
         let a = maxel![[[1, 1], [1, 2], [2, 2], [2, 2]]];
+        // let a = BoxDisplay::<AnyBox>::from(&a);
         println!("{a}");
         println!("{a:#}");
 

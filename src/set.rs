@@ -1,7 +1,7 @@
 use malachite::Natural;
 use rapidhash::{HashMapExt, RapidHashMap};
 
-use crate::{AnyBox, BoxValue, SetBox};
+use crate::{AnyBox, BoxKind, BoxValue, SetBox};
 
 impl BoxValue<AnyBox> {
     /// A set is a box with all its elements having multiplicity one
@@ -57,6 +57,7 @@ impl BoxValue<AnyBox> {
 
         let mut result = BoxValue::<AnyBox>::new();
         let color = left.get_color(0) + right.get_color(0);
+        result.kinds.push(BoxKind::Any);
         result.colors.push(color);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1);
@@ -84,6 +85,7 @@ impl BoxValue<AnyBox> {
 
         let mut result = BoxValue::<AnyBox>::new();
         let color = left.get_color(0) + right.get_color(0);
+        result.kinds.push(BoxKind::Any);
         result.colors.push(color);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1);
@@ -107,32 +109,38 @@ impl BoxValue<AnyBox> {
 #[cfg(test)]
 mod tests {
 
-    use crate::{AnyBox, BoxValue};
+    use crate::BoxValue;
 
     #[test]
     fn test_set_ops() {
-        let mut m = BoxValue::zero().cast::<AnyBox>();
+        let mut m = BoxValue::empty();
         m.extend_with_mul(BoxValue::from(1), 4_u32);
         m.extend_with_mul(BoxValue::from(2), 2_u32);
         m.extend_with_mul(BoxValue::from(3), 1_u32);
-        let mut n = BoxValue::zero().cast::<AnyBox>();
+
+        let mut n = BoxValue::empty();
         n.extend_with_mul(BoxValue::from(1), 7_u32);
         n.extend_with_mul(BoxValue::from(3), 3_u32);
         n.extend(BoxValue::from(4));
+
         let union = BoxValue::union(&m, &n);
-        let mut exp = BoxValue::zero().cast();
+
+        let mut exp = BoxValue::empty();
         exp.extend_with_mul(BoxValue::from(1), 7_u32);
         exp.extend_with_mul(BoxValue::from(2), 2_u32);
         exp.extend_with_mul(BoxValue::from(3), 3_u32);
         exp.extend_with_mul(BoxValue::from(4), 1_u32);
         exp.sort_immediate_children();
+
         assert_eq!(union, exp);
 
         let intersection = BoxValue::intersection(&m, &n);
-        let mut exp = BoxValue::zero().cast();
+
+        let mut exp = BoxValue::empty();
         exp.extend_with_mul(BoxValue::from(1), 4_u32);
         exp.extend_with_mul(BoxValue::from(3), 1_u32);
         exp.sort_immediate_children();
+
         assert_eq!(intersection, exp);
     }
 }

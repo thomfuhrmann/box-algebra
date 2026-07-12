@@ -117,6 +117,78 @@ impl<L: BoxType + BoxMul<R>, R: BoxType> Mul<BoxValue<R>> for &BoxValue<L> {
     }
 }
 
+impl<T: BoxType + BoxMul<T>> Mul<BoxValue<T>> for u32 {
+    type Output = BoxValue<T::Output>;
+
+    #[inline]
+    fn mul(self, rhs: BoxValue<T>) -> Self::Output {
+        BoxValue::from(self).cast::<T>() * rhs
+    }
+}
+
+impl<T: BoxType + BoxMul<T>> Mul<u32> for BoxValue<T> {
+    type Output = BoxValue<T::Output>;
+
+    #[inline]
+    fn mul(self, rhs: u32) -> Self::Output {
+        self * BoxValue::from(rhs).cast::<T>()
+    }
+}
+
+impl<T: BoxType + BoxMul<T>> Mul<BoxValue<T>> for u64 {
+    type Output = BoxValue<T::Output>;
+
+    #[inline]
+    fn mul(self, rhs: BoxValue<T>) -> Self::Output {
+        BoxValue::from(self).cast::<T>() * rhs
+    }
+}
+
+impl<T: BoxType + BoxMul<T>> Mul<u64> for BoxValue<T> {
+    type Output = BoxValue<T::Output>;
+
+    #[inline]
+    fn mul(self, rhs: u64) -> Self::Output {
+        self * BoxValue::from(rhs).cast::<T>()
+    }
+}
+
+impl<T: BoxType + BoxMul<T>> Mul<BoxValue<T>> for i32 {
+    type Output = BoxValue<T::Output>;
+
+    #[inline]
+    fn mul(self, rhs: BoxValue<T>) -> Self::Output {
+        BoxValue::from(self).cast::<T>() * rhs
+    }
+}
+
+impl<T: BoxType + BoxMul<T>> Mul<i32> for BoxValue<T> {
+    type Output = BoxValue<T::Output>;
+
+    #[inline]
+    fn mul(self, rhs: i32) -> Self::Output {
+        self * BoxValue::from(rhs).cast::<T>()
+    }
+}
+
+impl<T: BoxType + BoxMul<T>> Mul<BoxValue<T>> for i64 {
+    type Output = BoxValue<T::Output>;
+
+    #[inline]
+    fn mul(self, rhs: BoxValue<T>) -> Self::Output {
+        BoxValue::from(self).cast::<T>() * rhs
+    }
+}
+
+impl<T: BoxType + BoxMul<T>> Mul<i64> for BoxValue<T> {
+    type Output = BoxValue<T::Output>;
+
+    #[inline]
+    fn mul(self, rhs: i64) -> Self::Output {
+        self * BoxValue::from(rhs).cast::<T>()
+    }
+}
+
 impl Mul for BoxVariant {
     type Output = Self;
 

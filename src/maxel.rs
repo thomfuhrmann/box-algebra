@@ -2,6 +2,7 @@
 
 use crate::{AnyBox, BoxKind, BoxType, BoxValue, Color, MaxelBox, PixelBox, UnixelBox, VexelBox};
 use malachite::Natural;
+use rapidhash::RapidHashMap;
 
 impl BoxValue<UnixelBox> {
     /// Create a unixel out of a box
@@ -142,20 +143,46 @@ impl From<Vec<BoxValue<PixelBox>>> for BoxValue<MaxelBox> {
 impl BoxValue<MaxelBox> {
     /// Multiply two maxels
     pub fn mul_max(left: Self, right: Self) -> Self {
+        let mut unique_children: RapidHashMap<u64, BoxValue<PixelBox>> =
+            rapidhash::RapidHashMap::default();
+
         let mut result = BoxValue::<MaxelBox>::new();
         result.kinds.push(BoxKind::Maxel);
         result.colors.push(Color::Black);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1);
+
         for left_pix in left {
+            let col = left_pix.get_color(0);
+            let lhs_mul = left_pix.get_multiplicity(0);
             for right_pix in right.clone() {
-                if let Some(mul) = BoxValue::<PixelBox>::mul_pix(
+                let rhs_mul = right_pix.get_multiplicity(0);
+                if let Some(mut pixel) = BoxValue::mul_pix(
                     left_pix.clone().cast::<PixelBox>(),
                     right_pix.cast::<PixelBox>(),
                 ) {
-                    result.extend(mul);
+                    let struct_hash = pixel.hash_content(unique_children.hasher());
+                    if let Some(other) = unique_children.get_mut(&struct_hash)
+                        && pixel.is_eq_content(other)
+                    {
+                        let other_col = other.get_color(0);
+                        let other_mul = other.get_multiplicity(0);
+                        other.set_color(0, col * other_col);
+                        other.set_multiplicity(0, other_mul + lhs_mul.clone());
+                    } else {
+                        pixel.set_multiplicity(0, lhs_mul.clone() * rhs_mul);
+                        unique_children.insert(struct_hash, pixel);
+                    }
                 }
             }
+        }
+        for pixel in unique_children.into_values() {
+            let mul = pixel.get_multiplicity(0);
+            if mul == 0 {
+                continue;
+            }
+
+            result.extend(pixel);
         }
         result.sort_immediate_children();
         result
@@ -163,21 +190,47 @@ impl BoxValue<MaxelBox> {
 
     /// Multiply a maxel with a vexel
     pub fn mul_max_vex(self, vex: BoxValue<VexelBox>) -> BoxValue<VexelBox> {
+        let mut unique_children: RapidHashMap<u64, BoxValue<UnixelBox>> =
+            rapidhash::RapidHashMap::default();
+
         let mut result = BoxValue::<VexelBox>::new();
         result.kinds.push(BoxKind::Vexel);
         result.colors.push(Color::Black);
         result.multiplicities.push(Natural::from(1_u32));
         result.lengths.push(1);
+
         for left_pix in self {
+            let col = left_pix.get_color(0);
+            let lhs_mul = left_pix.get_multiplicity(0);
             for right_unix in vex.clone() {
-                if let Some(mul) = left_pix
+                let rhs_mul = right_unix.get_multiplicity(0);
+                if let Some(mut unixel) = left_pix
                     .clone()
                     .cast::<PixelBox>()
                     .mul_pix_unix(right_unix.cast::<UnixelBox>())
                 {
-                    result.extend(mul);
+                    let struct_hash = unixel.hash_content(unique_children.hasher());
+                    if let Some(other) = unique_children.get_mut(&struct_hash)
+                        && unixel.is_eq_content(other)
+                    {
+                        let other_col = other.get_color(0);
+                        let other_mul = other.get_multiplicity(0);
+                        other.set_color(0, col * other_col);
+                        other.set_multiplicity(0, other_mul + lhs_mul.clone());
+                    } else {
+                        unixel.set_multiplicity(0, lhs_mul.clone() * rhs_mul);
+                        unique_children.insert(struct_hash, unixel);
+                    }
                 }
             }
+        }
+        for unixel in unique_children.into_values() {
+            let mul = unixel.get_multiplicity(0);
+            if mul == 0 {
+                continue;
+            }
+
+            result.extend(unixel);
         }
         result.sort_immediate_children();
         result
@@ -235,7 +288,7 @@ macro_rules! vexel {
                 result.extend(unixel);
             }
             result.sort_immediate_children();
-            result
+            $crate::BoxVariant::from(result)
        }
     };
 }
@@ -277,16 +330,16 @@ macro_rules! maxel {
                 }
             )*
 
-            for unixel in unique_children.into_values() {
-                let mul = unixel.get_multiplicity(0);
+            for pixel in unique_children.into_values() {
+                let mul = pixel.get_multiplicity(0);
                 if mul == 0 {
                     continue;
                 }
 
-                result.extend(unixel);
+                result.extend(pixel);
             }
             result.sort_immediate_children();
-            result
+            $crate::BoxVariant::from(result)
         }
     };
 }
@@ -314,14 +367,27 @@ mod tests {
         let a = maxel![[[1, 1], [1, 2], [2, 2]]];
         let b = maxel![[[1, 2], [2, 1]]];
 
-        let prod = BoxValue::mul_max(a, b);
+        let prod = a * b;
         let expected = maxel![[[1, 1], [1, 2], [2, 1]]];
+        assert_eq!(prod, expected);
+
+        let a = maxel![[[1, 1], [1, 1], [1, 2], [2, 2], [1, 4]]];
+        let b = maxel![[[1, 2], [2, 1], [4, 1]]];
+
+        let prod = a * b;
+        let expected = maxel![[[1, 1], [1, 1], [1, 2], [1, 2], [2, 1]]];
         assert_eq!(prod, expected);
 
         let m = maxel![[[1, 1], [2, 2], [3, 3]]];
         let v = vexel!([1, 2, 3]);
-        let prod = m.mul_max_vex(v);
+        let prod = m * v;
         let expected = vexel!([1, 2, 3]);
+        assert_eq!(prod, expected);
+
+        let m = maxel![[[1, 1], [2, 2], [3, 3]]];
+        let v = vexel!([1, 1, 2, 3]);
+        let prod = m * v;
+        let expected = vexel!([1, 1, 2, 3]);
         assert_eq!(prod, expected);
     }
 }
