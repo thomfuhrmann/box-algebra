@@ -257,7 +257,7 @@ mod tests {
         println!("{a:#}");
 
         let a = vexel![[1, 2, 3, 3]];
-        let a = BoxDisplay::<AnyBox>::from(&a.into());
+        let a = BoxDisplay::<AnyBox>::from(&a);
         println!("{a}");
         println!("{a:#}");
     }
