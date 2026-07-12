@@ -30,6 +30,22 @@ impl<T: BoxType> Display for BoxValue<T> {
         // ⎣...⎦
         // ⎡...⎤
         let kind = self.get_kind(0);
+        if kind == BoxKind::Empty {
+            let zero = if self.is_anti() {
+                "0".red()
+            } else {
+                "0".black()
+            };
+            return write!(f, "{}", zero);
+        } else if kind == BoxKind::Num {
+            let mult = self.get_multiplicity(1);
+            let num = if self.is_anti() {
+                mult.to_string().red()
+            } else {
+                mult.to_string().black()
+            };
+            return write!(f, "{}", num);
+        }
 
         let open_bracket = if kind == BoxKind::Unixel || kind == BoxKind::Pixel {
             "⎡"
@@ -55,12 +71,7 @@ impl<T: BoxType> Display for BoxValue<T> {
             close_bracket.black()
         };
 
-        let is_num = self.get_length(0) == 2;
-
-        if !is_num {
-            write!(f, "{}", open)?;
-        }
-
+        write!(f, "{}", open)?;
         let mut first = true;
         for child in self.clone() {
             if !first {
@@ -68,36 +79,24 @@ impl<T: BoxType> Display for BoxValue<T> {
             }
             first = false;
 
-            let len = child.get_length(0);
             let mult = child.get_multiplicity(0);
-            if len > 1 {
-                if f.alternate() {
-                    if mult > 1 {
-                        write!(f, "{}", to_subscript(mult))?;
-                    }
+            if f.alternate() {
+                if mult > 1 {
+                    write!(f, "{}", to_subscript(mult))?;
+                }
 
-                    child.fmt(f)?;
-                } else if let Ok(count) = usize::try_from(&mult) {
-                    for i in 0..count {
-                        if i > 0 {
-                            write!(f, ",")?;
-                        }
-                        child.fmt(f)?;
+                child.fmt(f)?;
+            } else if let Ok(count) = usize::try_from(&mult) {
+                for i in 0..count {
+                    if i > 0 {
+                        write!(f, ",")?;
                     }
+                    child.fmt(f)?;
                 }
-            } else {
-                if child.is_anti() {
-                    write!(f, "-")?;
-                }
-                write!(f, "{}", mult)?;
             }
         }
 
-        if !is_num {
-            write!(f, "{}", close)
-        } else {
-            write!(f, "")
-        }
+        write!(f, "{}", close)
     }
 }
 

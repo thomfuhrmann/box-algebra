@@ -17,9 +17,9 @@ pub mod display;
 // pub mod function;
 pub mod maxel;
 pub mod mul;
-// pub mod parser;
+pub mod parser;
 // pub mod set;
-// pub mod store;
+pub mod store;
 
 /// Kind of boxes that can exist in a store
 #[derive(Debug, Clone, Hash, PartialEq, Eq, EnumDiscriminants)]
@@ -754,6 +754,16 @@ impl From<i64> for BoxVariant {
         }
 
         zero.wrap::<NumBox>(value.unsigned_abs()).into()
+    }
+}
+
+impl From<Natural> for BoxValue<NumBox> {
+    fn from(value: Natural) -> Self {
+        let zero = BoxValue::zero();
+        if value == 0 {
+            return zero.cast();
+        }
+        zero.wrap::<NumBox>(value)
     }
 }
 

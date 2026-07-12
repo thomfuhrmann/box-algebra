@@ -67,6 +67,8 @@ pub enum Token {
     Comma,
     #[regex(r"[₀₁₂₃₄₅₆₇₈₉]+", parse_subscript)]
     Subscript(Natural),
+    #[token("⧠")]
+    Box,
 }
 
 #[derive(Debug, Clone)]
@@ -97,10 +99,6 @@ pub fn parser<'src>()
             };
 
             let var = select! { Token::Var(name) => Expr::Var(name) };
-
-            let unary_minus = just(Token::Minus)
-                .then(p.clone())
-                .map(|(_, expr)| Expr::Neg(Box::new(expr)));
 
             let subscript_prefix =
                 any::<&[Token], extra::Err<Simple<Token>>>().filter_map(|token| match token {
@@ -178,14 +176,24 @@ pub fn parser<'src>()
                 .clone()
                 .delimited_by(just(Token::OpenGroup), just(Token::CloseGroup));
 
-            number
-                .or(unary_minus)
+            let base_atom = number
                 .or(var)
                 .or(vexel)
                 .or(maxel)
                 .or(list)
                 .or(any_box)
-                .or(parenthesized)
+                .or(parenthesized);
+
+            just(Token::Minus)
+                .repeated()
+                .collect::<Vec<_>>()
+                .then(base_atom)
+                .map(|(minuses, mut expr)| {
+                    for _ in minuses {
+                        expr = Expr::Neg(Box::new(expr));
+                    }
+                    expr
+                })
         };
 
         let prod = atom.clone().foldl(
@@ -233,7 +241,7 @@ impl Expr {
             Expr::Var(name) => store
                 .fetch_box_by_name(name)
                 .expect("Undefined Var assignment"),
-            Expr::Unixel(x) => BoxVariant::Unixel(BoxValue::unixel(x.eval(store).into_any())),
+            Expr::Unixel(x) => BoxVariant::Unixel(BoxValue::unixel(x.eval(store).into_any_raw())),
             Expr::Vexel(xs) => {
                 let mut vs = Vec::new();
                 for x in xs {
@@ -246,8 +254,8 @@ impl Expr {
                 BoxVariant::Vexel(vs.into())
             }
             Expr::Pixel(x, y) => BoxVariant::Pixel(BoxValue::pixel(
-                x.eval(store).into_any(),
-                y.eval(store).into_any(),
+                x.eval(store).into_any_raw(),
+                y.eval(store).into_any_raw(),
             )),
             Expr::Maxel(pxs) => {
                 let mut vs = Vec::new();
@@ -265,7 +273,7 @@ impl Expr {
                 let mut vs = Vec::new();
                 for bx in bxs {
                     let var = bx.eval(store).into_any();
-                    vs.push(var);
+                    vs.push(var.into_any_raw());
                 }
                 BoxVariant::Any(vs.into())
             }
@@ -317,7 +325,7 @@ mod tests {
 
         // evaluates the AST to get the result
         let val = ast.eval(&store);
-        println!("\n[result]\n{:?}", val);
+        println!("\n[result]\n{:#}", val);
 
         let input = "⎣₂⎡2,3⎤,⎡4,6⎤⎦";
         // let input = "⎣⎡2⎤,⎡4⎤,⎡3⎤,⎡6⎤⎦";
